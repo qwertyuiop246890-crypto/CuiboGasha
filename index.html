@@ -187,7 +187,7 @@
             const [apiUrl, setApiUrl] = useState(() => localStorage.getItem('cuibo_gasha_api_url') || '');
 
             // 輸入區暫存
-            const [currentMachine, setCurrentMachine] = useState({ name: '', priceJPY: 500, priceTWD: 170, variant: '隨機' });
+            const [currentMachine, setCurrentMachine] = useState({ name: '', priceJPY: 500, priceTWD: 170, variant: '' });
             const [inputCustomer, setInputCustomer] = useState('');
             const [inputQty, setInputQty] = useState(1);
             const [isEco, setIsEco] = useState(false);
@@ -205,8 +205,11 @@
             const [editingPrices, setEditingPrices] = useState([]);
             const [showGlobalSettings, setShowGlobalSettings] = useState(false);
             
+            // 訂單編輯 (新功能)
+            const [editingOrder, setEditingOrder] = useState(null); // 當前正在編輯的訂單物件
+            
             // App 風格確認對話框狀態
-            const [confirmConfig, setConfirmConfig] = useState(null); // { title, message, onConfirm, type: 'danger' | 'info' }
+            const [confirmConfig, setConfirmConfig] = useState(null);
 
             const fileInputRef = useRef(null);
 
@@ -221,7 +224,6 @@
                 setTimeout(() => setNotification(null), 3000);
             };
 
-            // 觸發 App 風格確認視窗
             const triggerConfirm = (title, message, onConfirm, type = 'info') => {
                 setConfirmConfig({ title, message, onConfirm, type });
             };
@@ -229,12 +231,13 @@
             const customerList = useMemo(() => {
                 const map = {};
                 orders.forEach(o => {
-                    if (!map[o.customer]) {
-                        map[o.customer] = { name: o.customer, totalSpent: 0, items: [], orderCount: 0 };
+                    const cleanName = o.customer ? o.customer.trim() : 'Unknown';
+                    if (!map[cleanName]) {
+                        map[cleanName] = { name: cleanName, totalSpent: 0, items: [], orderCount: 0 };
                     }
-                    map[o.customer].orderCount += 1;
-                    map[o.customer].totalSpent += o.customerTotalTWD;
-                    map[o.customer].items.push({
+                    map[cleanName].orderCount += 1;
+                    map[cleanName].totalSpent += o.customerTotalTWD;
+                    map[cleanName].items.push({
                         ...o,
                         itemTotal: o.customerTotalTWD,
                         finalPrice: o.unitPriceTWD
@@ -254,7 +257,11 @@
                 return { totalRevenue, totalJPY, totalCount, pendingPurchase, pendingPick };
             }, [orders]);
 
-            const filteredOrders = orders.filter(o => o.customer.includes(searchQuery) || o.productName.includes(searchQuery));
+            const filteredOrders = orders.filter(o => 
+                o.customer.includes(searchQuery) || 
+                o.productName.includes(searchQuery) || 
+                (o.variant && o.variant.includes(searchQuery))
+            );
 
             // --- 4. 操作處理 ---
             const handlePriceSelect = (jpy) => {
@@ -287,12 +294,15 @@
 
                 const unitPriceTWD = currentMachine.priceTWD;
                 const ecoTotal = isEco ? (ECO_FEE * inputQty) : 0;
+                const variantToSave = currentMachine.variant || '隨機';
+                const cleanCustomer = inputCustomer.trim();
+
                 const newOrder = {
                     id: Date.now(),
                     date: new Date().toISOString().split('T')[0],
-                    customer: inputCustomer,
+                    customer: cleanCustomer,
                     productName: currentMachine.name,
-                    variant: currentMachine.variant,
+                    variant: variantToSave,
                     qty: inputQty,
                     unitPriceJPY: currentMachine.priceJPY,
                     unitPriceTWD: unitPriceTWD,
@@ -314,7 +324,6 @@
                 setOrders(prev => prev.map(o => o.id === id ? { ...o, [field]: !o[field] } : o));
             };
 
-            // 刪除訂單 - 使用自訂 Modal
             const deleteOrder = (id) => {
                 triggerConfirm('刪除訂單', '確定要刪除這筆訂單嗎？刪除後無法復原。', () => {
                     setOrders(prev => prev.filter(o => o.id !== id));
@@ -322,7 +331,33 @@
                 }, 'danger');
             };
 
-            // 清除資料 - 使用自訂 Modal
+            // --- 編輯訂單邏輯 (Update Order) ---
+            const handleSaveEditedOrder = () => {
+                if (!editingOrder) return;
+                
+                // 重新計算金額
+                const ecoTotal = editingOrder.ecoFeePerUnit > 0 ? (ECO_FEE * editingOrder.qty) : 0;
+                const totalTWD = (editingOrder.unitPriceTWD * editingOrder.qty) + ecoTotal;
+                const totalJPY = editingOrder.unitPriceJPY * editingOrder.qty;
+                const totalGashaTWD = editingOrder.unitPriceTWD * editingOrder.qty;
+
+                setOrders(prev => prev.map(o => o.id === editingOrder.id ? {
+                    ...o,
+                    productName: editingOrder.productName,
+                    variant: editingOrder.variant || '隨機',
+                    qty: editingOrder.qty,
+                    unitPriceTWD: editingOrder.unitPriceTWD, // 允許修改單價
+                    ecoFeePerUnit: editingOrder.ecoFeePerUnit,
+                    ecoFeeTotal: ecoTotal,
+                    gashaTotalJPY: totalJPY,
+                    gashaTotalTWD: totalGashaTWD,
+                    customerTotalTWD: totalTWD
+                } : o));
+
+                setEditingOrder(null);
+                notify("訂單已更新");
+            };
+
             const handleClearAllData = () => {
                 triggerConfirm('⚠️ 危險操作', '此操作將「永久清除所有訂單資料」！\n(價格設定會保留)\n\n您確定要繼續嗎？', () => {
                     setOrders([]);
@@ -331,7 +366,6 @@
                 }, 'danger');
             };
 
-            // 還原備份 - 使用自訂 Modal
             const handleImportBackup = (event) => {
                 const file = event.target.files[0];
                 if (!file) return;
@@ -371,7 +405,6 @@
                 notify("CSV 已匯出");
             };
 
-            // 雲端同步 - 使用自訂 Modal
             const handleCloudUpload = async () => {
                 if(!apiUrl) { notify("請先設定 Google Script URL"); return; }
                 setIsSyncing(true);
@@ -428,7 +461,7 @@
             return (
                 <div className="min-h-screen pb-24 relative">
                     
-                    {/* App 風格確認對話框 (Custom Modal) */}
+                    {/* App 風格確認對話框 */}
                     {confirmConfig && (
                         <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-latte-900/40 backdrop-blur-sm animate-in">
                             <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl space-y-4 border border-cream-200">
@@ -440,14 +473,57 @@
                                     {confirmConfig.message}
                                 </p>
                                 <div className="flex gap-3 pt-2">
-                                    <button onClick={() => setConfirmConfig(null)} className="flex-1 py-3.5 rounded-2xl font-bold bg-cream-100 text-latte-500 hover:bg-cream-200 active:scale-95 transition-all">
-                                        取消
-                                    </button>
+                                    <button onClick={() => setConfirmConfig(null)} className="flex-1 py-3.5 rounded-2xl font-bold bg-cream-100 text-latte-500 hover:bg-cream-200 active:scale-95 transition-all">取消</button>
                                     <button onClick={() => { confirmConfig.onConfirm(); setConfirmConfig(null); }} className={`flex-1 py-3.5 rounded-2xl font-bold text-white shadow-lg active:scale-95 transition-all flex justify-center items-center gap-1 ${confirmConfig.type === 'danger' ? 'bg-rose-500 shadow-rose-200 hover:bg-rose-600' : 'bg-latte-500 shadow-latte-200 hover:bg-latte-600'}`}>
                                         {confirmConfig.type === 'danger' ? <Trash2 size={18}/> : <CheckCircle2 size={18}/>}
                                         確認
                                     </button>
                                 </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Order Edit Modal (新增的訂單編輯視窗) */}
+                    {editingOrder && (
+                        <div className="fixed inset-0 z-[250] flex items-center justify-center p-4 bg-latte-900/40 backdrop-blur-sm animate-in">
+                            <div className="bg-white rounded-[30px] w-full max-w-sm p-6 shadow-2xl space-y-4 flex flex-col">
+                                <div className="flex justify-between items-center border-b border-cream-200 pb-3">
+                                    <h3 className="font-bold text-latte-800 text-lg flex items-center gap-2"><Edit size={20}/> 編輯訂單</h3>
+                                    <button onClick={()=>setEditingOrder(null)} className="w-8 h-8 rounded-full bg-cream-200 text-latte-500 flex items-center justify-center"><X size={18}/></button>
+                                </div>
+                                <div className="space-y-3 overflow-y-auto max-h-[60vh] p-1">
+                                    <div>
+                                        <label className="text-xs font-bold text-latte-400 ml-1">顧客名稱 (唯讀)</label>
+                                        <div className="w-full bg-cream-50 p-3 rounded-xl font-bold text-latte-600">{editingOrder.customer}</div>
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-bold text-latte-400 ml-1">機台名稱</label>
+                                        <input className="w-full bg-white border border-cream-200 p-3 rounded-xl outline-none focus:border-latte-400 font-bold text-latte-800" value={editingOrder.productName} onChange={e=>setEditingOrder({...editingOrder, productName: e.target.value})}/>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <div className="flex-1">
+                                            <label className="text-xs font-bold text-latte-400 ml-1">款式</label>
+                                            <input className="w-full bg-white border border-cream-200 p-3 rounded-xl outline-none focus:border-latte-400 font-bold text-latte-800" value={editingOrder.variant} onChange={e=>setEditingOrder({...editingOrder, variant: e.target.value})}/>
+                                        </div>
+                                        <div className="w-24">
+                                            <label className="text-xs font-bold text-latte-400 ml-1">數量</label>
+                                            <div className="flex items-center bg-white border border-cream-200 rounded-xl p-1">
+                                                <button onClick={()=>setEditingOrder({...editingOrder, qty: Math.max(1, editingOrder.qty-1)})} className="w-8 h-8 flex items-center justify-center text-latte-400 active:scale-90"><Minus size={14}/></button>
+                                                <span className="flex-1 text-center font-bold text-latte-800">{editingOrder.qty}</span>
+                                                <button onClick={()=>setEditingOrder({...editingOrder, qty: editingOrder.qty+1})} className="w-8 h-8 flex items-center justify-center text-latte-400 active:scale-90"><Plus size={14}/></button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-bold text-latte-400 ml-1">單價 (NT$)</label>
+                                        <input type="number" className="w-full bg-white border border-cream-200 p-3 rounded-xl outline-none focus:border-latte-400 font-bold text-latte-800" value={editingOrder.unitPriceTWD} onChange={e=>setEditingOrder({...editingOrder, unitPriceTWD: parseInt(e.target.value)||0})}/>
+                                    </div>
+                                    <button onClick={()=>setEditingOrder({...editingOrder, ecoFeePerUnit: editingOrder.ecoFeePerUnit > 0 ? 0 : ECO_FEE})} className={`w-full py-3 rounded-xl border-2 font-bold transition-all flex items-center justify-center gap-2 ${editingOrder.ecoFeePerUnit > 0 ? 'border-emerald-400 bg-emerald-50 text-emerald-700' : 'border-cream-200 text-latte-300'}`}>
+                                        <span className="text-xs">環保費狀態:</span>
+                                        {editingOrder.ecoFeePerUnit > 0 ? '已啟用 (+10)' : '未啟用'}
+                                    </button>
+                                </div>
+                                <button onClick={handleSaveEditedOrder} className="w-full bg-latte-600 text-white py-3.5 rounded-2xl font-bold shadow-lg shadow-latte-600/20 active:scale-95 transition">儲存變更</button>
                             </div>
                         </div>
                     )}
@@ -503,26 +579,85 @@
                         {/* 1. Input Tab */}
                         {activeTab === 'input' && (
                             <div className="space-y-4 animate-in">
-                                <div className="bg-white rounded-3xl p-5 shadow-soft border border-cream-200">
-                                    <div className="flex justify-between items-center mb-2"><div className="text-xs font-bold text-latte-400 tracking-wider flex items-center gap-1"><Tag size={12}/> 機台設定 (鎖定中)</div><button onClick={openPriceEditor} className="text-[10px] text-latte-500 bg-cream-100 px-2 py-1 rounded border border-cream-200 flex items-center gap-1 hover:bg-cream-200 active:scale-95 transition"><Edit size={10}/> 編輯價格</button></div>
-                                    <input type="text" placeholder="輸入機台名稱 (例: 吉伊卡哇)" className="w-full text-lg font-bold border-b-2 border-cream-200 focus:border-latte-400 outline-none pb-2 mb-4 placeholder-latte-300 bg-transparent text-latte-800" value={currentMachine.name} onChange={e => setCurrentMachine({...currentMachine, name: e.target.value})}/>
-                                    <div className="grid grid-cols-4 gap-2 mb-4">{Object.keys(priceTable).map(Number).sort((a,b)=>a-b).map(price => (<button key={price} onClick={() => handlePriceSelect(price)} className={`py-2 rounded-xl text-sm font-bold transition-all ${currentMachine.priceJPY === price ? 'price-btn-active' : 'price-btn'}`}>¥{price}</button>))}</div>
-                                    <div className="flex justify-between items-center bg-cream-50 p-3 rounded-2xl border border-cream-200"><div className="text-xs text-latte-400 font-bold">自動換算</div><div className="font-black text-latte-600 flex items-baseline gap-1"><span className="text-sm font-normal text-latte-400">¥{currentMachine.priceJPY} =</span><span className="text-xl">NT${currentMachine.priceTWD}</span></div></div>
-                                    <div className="mt-3"><input type="text" placeholder="款式 (預設隨機)" className="w-full text-sm bg-cream-50 rounded-xl p-3 outline-none text-latte-800" value={currentMachine.variant} onChange={e => setCurrentMachine({...currentMachine, variant: e.target.value})}/></div>
+                                
+                                {/* 1. 顧客名稱 (Customer Input) */}
+                                <div className="bg-white rounded-3xl p-5 shadow-lg border-2 border-latte-200">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 bg-cream-100 rounded-full flex items-center justify-center text-latte-400"><User size={20}/></div>
+                                        <input 
+                                            type="text" 
+                                            placeholder="誰要買? (輸入顧客名)" 
+                                            className="flex-1 bg-cream-50 rounded-xl py-3 px-4 font-bold text-lg outline-none focus:ring-2 ring-latte-300 text-latte-800"
+                                            value={inputCustomer}
+                                            onChange={e => setInputCustomer(e.target.value)}
+                                        />
+                                    </div>
                                 </div>
 
+                                {/* 2. 機台設定 (Machine Settings) */}
+                                <div className="bg-white rounded-3xl p-5 shadow-soft border border-cream-200">
+                                    <div className="flex justify-between items-center mb-2">
+                                        <div className="text-xs font-bold text-latte-400 tracking-wider flex items-center gap-1"><Tag size={12}/> 機台設定 (鎖定中)</div>
+                                        <button onClick={openPriceEditor} className="text-[10px] text-latte-500 bg-cream-100 px-2 py-1 rounded border border-cream-200 flex items-center gap-1 hover:bg-cream-200 active:scale-95 transition"><Edit size={10}/> 編輯價格</button>
+                                    </div>
+                                    <input 
+                                        type="text" 
+                                        placeholder="輸入機台名稱 (例: 吉伊卡哇)" 
+                                        className="w-full text-lg font-bold border-b-2 border-cream-200 focus:border-latte-400 outline-none pb-2 mb-4 placeholder-latte-300 bg-transparent text-latte-800"
+                                        value={currentMachine.name}
+                                        onChange={e => setCurrentMachine({...currentMachine, name: e.target.value})}
+                                    />
+                                    <div className="grid grid-cols-4 gap-2 mb-4">
+                                        {Object.keys(priceTable).map(Number).sort((a,b)=>a-b).map(price => (
+                                            <button 
+                                                key={price}
+                                                onClick={() => handlePriceSelect(price)}
+                                                className={`py-2 rounded-xl text-sm font-bold transition-all ${currentMachine.priceJPY === price ? 'price-btn-active' : 'price-btn'}`}
+                                            >
+                                                ¥{price}
+                                            </button>
+                                        ))}
+                                    </div>
+                                    <div className="flex justify-between items-center bg-cream-50 p-3 rounded-2xl border border-cream-200">
+                                        <div className="text-xs text-latte-400 font-bold">自動換算</div>
+                                        <div className="font-black text-latte-600 flex items-baseline gap-1">
+                                            <span className="text-sm font-normal text-latte-400">¥{currentMachine.priceJPY} =</span>
+                                            <span className="text-xl">NT${currentMachine.priceTWD}</span>
+                                        </div>
+                                    </div>
+                                    <div className="mt-3">
+                                        <input 
+                                            type="text" 
+                                            placeholder="款式 (預設隨機)" 
+                                            className="w-full text-sm bg-cream-50 rounded-xl p-3 outline-none text-latte-800"
+                                            value={currentMachine.variant}
+                                            onChange={e => setCurrentMachine({...currentMachine, variant: e.target.value})}
+                                        />
+                                    </div>
+                                </div>
+
+                                {/* 3. 加入清單 & 數量 (Action Card) */}
                                 <div className="bg-white rounded-3xl p-5 shadow-lg border-2 border-latte-200">
-                                    <div className="flex items-center gap-3 mb-5"><div className="w-10 h-10 bg-cream-100 rounded-full flex items-center justify-center text-latte-400"><User size={20}/></div><input type="text" placeholder="誰要買? (輸入顧客名)" className="flex-1 bg-cream-50 rounded-xl py-3 px-4 font-bold text-lg outline-none focus:ring-2 ring-latte-300 text-latte-800" value={inputCustomer} onChange={e => setInputCustomer(e.target.value)}/></div>
                                     <div className="flex items-center justify-between mb-6">
                                         <div className="flex items-center gap-3 bg-cream-50 rounded-full p-1 border border-cream-200">
-                                            {/* 這裡改用 Minus 圖示 */}
                                             <button onClick={() => setInputQty(Math.max(1, inputQty-1))} className="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-latte-400 active:scale-90 transition"><Minus size={18}/></button>
                                             <span className="text-xl font-black w-8 text-center text-latte-800">{inputQty}</span>
                                             <button onClick={() => setInputQty(inputQty+1)} className="w-10 h-10 rounded-full bg-latte-500 text-white shadow-md flex items-center justify-center active:scale-90 transition"><Plus size={18}/></button>
                                         </div>
-                                        <button onClick={() => setIsEco(!isEco)} className={`flex flex-col items-center justify-center px-4 py-2 rounded-2xl border-2 transition-all ${isEco ? 'border-emerald-400 bg-emerald-50 text-emerald-700' : 'border-cream-200 text-latte-300 bg-white'}`}><span className="text-[10px] font-bold">拆殼/環保</span><span className="font-bold text-sm">+{isEco ? `$${ECO_FEE*inputQty}` : '$0'}</span></button>
+                                        <button 
+                                            onClick={() => setIsEco(!isEco)}
+                                            className={`flex flex-col items-center justify-center px-4 py-2 rounded-2xl border-2 transition-all ${isEco ? 'border-emerald-400 bg-emerald-50 text-emerald-700' : 'border-cream-200 text-latte-300 bg-white'}`}
+                                        >
+                                            <span className="text-[10px] font-bold">拆殼/環保</span>
+                                            <span className="font-bold text-sm">+{isEco ? `$${ECO_FEE*inputQty}` : '$0'}</span>
+                                        </button>
                                     </div>
-                                    <button onClick={addOrder} className="w-full bg-latte-800 text-cream-50 py-4 rounded-2xl font-bold text-lg shadow-lg shadow-latte-800/20 active:scale-98 transition flex items-center justify-center gap-2 hover:brightness-110"><span>加入清單</span><span className="bg-white/20 px-2 py-0.5 rounded text-sm">${(currentMachine.priceTWD * inputQty) + (isEco ? ECO_FEE * inputQty : 0)}</span></button>
+                                    <button onClick={addOrder} className="w-full bg-latte-800 text-cream-50 py-4 rounded-2xl font-bold text-lg shadow-lg shadow-latte-800/20 active:scale-98 transition flex items-center justify-center gap-2 hover:brightness-110">
+                                        <span>加入清單</span>
+                                        <span className="bg-white/20 px-2 py-0.5 rounded text-sm">
+                                            ${(currentMachine.priceTWD * inputQty) + (isEco ? ECO_FEE * inputQty : 0)}
+                                        </span>
+                                    </button>
                                 </div>
                                 {orders.length > 0 && <div className="text-center text-xs text-latte-400 opacity-70">剛加入: {orders[0].customer} - {orders[0].productName} (${orders[0].customerTotalTWD})</div>}
                             </div>
@@ -531,12 +666,18 @@
                         {/* 2. List Tab */}
                         {activeTab === 'list' && (
                             <div className="space-y-3 animate-in">
-                                <div className="relative mb-4"><input type="text" placeholder="搜尋清單..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full bg-white rounded-xl p-3 pl-10 border border-cream-200 outline-none focus:border-latte-400 text-latte-800" /><Search size={16} className="absolute left-3 top-3.5 text-latte-300" /></div>
+                                <div className="relative mb-4"><input type="text" placeholder="搜尋機台、顧客、款式..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full bg-white rounded-xl p-3 pl-10 border border-cream-200 outline-none focus:border-latte-400 text-latte-800" /><Search size={16} className="absolute left-3 top-3.5 text-latte-300" /></div>
                                 {filteredOrders.map(o => (
                                     <div key={o.id} className={`bg-white p-4 rounded-3xl shadow-soft border border-cream-200 transition-all ${o.isPicked ? 'opacity-60 bg-cream-50' : ''}`}>
                                         <div className="flex justify-between items-start mb-3">
                                             <div><div className="font-bold text-latte-800 text-lg">{o.customer}</div><div className="text-xs text-latte-500 font-bold">{o.productName} <span className="text-latte-300 font-normal">({o.variant})</span></div><div className="mt-1 text-xs bg-cream-100 inline-block px-2 py-0.5 rounded text-latte-600 font-bold border border-cream-200">¥{o.unitPriceJPY} x {o.qty}{o.ecoFeeTotal > 0 && <span className="text-emerald-600 ml-1">+環保</span>}</div></div>
-                                            <div className="text-right"><div className="text-xl font-black text-latte-600">${o.customerTotalTWD}</div><button onClick={() => deleteOrder(o.id)} className="text-cream-300 p-2 hover:text-rose-400"><Trash2 size={16}/></button></div>
+                                            <div className="text-right">
+                                                <div className="text-xl font-black text-latte-600">${o.customerTotalTWD}</div>
+                                                <div className="flex gap-2 justify-end mt-1">
+                                                    <button onClick={() => setEditingOrder(o)} className="text-latte-400 p-2 hover:text-latte-600 bg-cream-50 rounded-lg active:scale-95 transition"><Edit size={16}/></button>
+                                                    <button onClick={() => deleteOrder(o.id)} className="text-cream-300 p-2 hover:text-rose-400 bg-cream-50 rounded-lg active:scale-95 transition"><Trash2 size={16}/></button>
+                                                </div>
+                                            </div>
                                         </div>
                                         <div className="grid grid-cols-2 gap-3">
                                             <button onClick={() => toggleStatus(o.id, 'isPurchased')} className={`text-xs py-2 rounded-xl font-bold flex items-center justify-center gap-1 transition-colors border ${o.isPurchased ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-cream-50 text-latte-300 border-cream-200'}`}><Coins size={14}/> {o.isPurchased ? '已投幣' : '未投幣'}</button>
@@ -615,30 +756,6 @@
                                     <button onClick={addPriceRow} className="w-full py-3 border border-dashed border-latte-300 rounded-xl text-latte-400 text-sm font-bold hover:bg-cream-50 hover:text-latte-600 transition flex items-center justify-center gap-1"><Plus size={16}/> 新增價格級距</button>
                                 </div>
                                 <button onClick={savePriceEditor} className="w-full bg-latte-600 text-white py-3 rounded-xl font-bold shadow-lg shadow-latte-600/20 active:scale-95 transition">儲存設定</button>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Customer Detail Modal */}
-                    {selectedCustomerDetail && (
-                        <div className="fixed inset-0 bg-latte-900/40 backdrop-blur-[2px] z-[160] flex items-end md:items-center justify-center p-0 md:p-4 animate-in">
-                            <div className="bg-white rounded-t-[30px] md:rounded-3xl w-full max-w-md h-[85vh] flex flex-col shadow-2xl">
-                                <div className="p-6 border-b border-cream-200 flex justify-between items-start bg-cream-50 rounded-t-[30px] md:rounded-t-3xl">
-                                    <div><h3 className="text-xl font-bold text-latte-800 flex items-center gap-2"><User size={20}/> {selectedCustomerDetail.name}</h3><div className="text-xs text-latte-500 font-bold mt-2 bg-white px-2 py-1 rounded-lg border border-cream-200 inline-block shadow-sm">總額: ${selectedCustomerDetail.totalSpent.toLocaleString()}</div></div>
-                                    <div className="flex gap-2">
-                                        <button onClick={()=>handleCopyOrderText(selectedCustomerDetail)} className="p-2.5 bg-white border border-cream-200 rounded-xl flex gap-1 text-xs items-center font-bold text-latte-600 shadow-sm active:scale-95" title="複製文案"><ClipboardList size={18}/> 文案</button>
-                                        <button onClick={()=>handleExportToImage(selectedCustomerDetail)} className="p-2.5 bg-white border border-cream-200 rounded-xl flex gap-1 text-xs items-center font-bold text-latte-600 shadow-sm active:scale-95" title="匯出圖片"><ImageIcon size={18}/> 存圖</button>
-                                        <button onClick={()=>setSelectedCustomerDetail(null)} className="p-2.5 bg-cream-200 text-latte-600 rounded-xl active:scale-95"><X size={18}/></button>
-                                    </div>
-                                </div>
-                                <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                                    {selectedCustomerDetail.items.map((item,idx)=>(
-                                        <div key={idx} className="flex justify-between items-center p-4 bg-white border border-cream-200 rounded-2xl shadow-sm">
-                                            <div><div className="font-bold text-sm text-latte-800">{item.productName}</div><div className="text-xs text-latte-400 mt-1 font-bold">{item.variant} {item.ecoFeeTotal > 0 && <span className="text-emerald-600 ml-1"> (含環保費)</span>}</div></div>
-                                            <div className="text-right"><div className="text-xs text-latte-400 mb-1">x {item.qty}</div><div className="text-sm text-latte-600 font-black">${item.customerTotalTWD}</div></div>
-                                        </div>
-                                    ))}
-                                </div>
                             </div>
                         </div>
                     )}
