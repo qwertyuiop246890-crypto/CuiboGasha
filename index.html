@@ -165,7 +165,7 @@
             CheckCircle2, Truck, DollarSign, Search, X, ChevronRight, ClipboardList, 
             User, ListOrdered, Tag, CheckSquare, Trash2, Edit, Save, 
             Image as ImageIcon, Download, Loader2, Coins, Circle, ShoppingCart, Settings,
-            Cloud, Upload, FileJson, FileSpreadsheet, RefreshCcw, Minus
+            Cloud, Upload, FileJson, FileSpreadsheet, RefreshCcw, Minus, ArrowRightCircle
         } from 'https://esm.sh/lucide-react@0.263.1?dev';
 
         const App = () => {
@@ -175,6 +175,7 @@
                 500: 170, 600: 190, 800: 260, 1000: 360, 1500: 450
             };
             const ECO_FEE = 10; 
+            const RELEASE_ZONE_NAME = "釋出區"; // 釋出區保留字
 
             // --- 2. 狀態管理 ---
             const loadLocal = (key, def) => {
@@ -205,8 +206,11 @@
             const [editingPrices, setEditingPrices] = useState([]);
             const [showGlobalSettings, setShowGlobalSettings] = useState(false);
             
-            // 訂單編輯 (新功能)
-            const [editingOrder, setEditingOrder] = useState(null); // 當前正在編輯的訂單物件
+            // 訂單編輯與轉讓
+            const [editingOrder, setEditingOrder] = useState(null); 
+            const [transferringOrder, setTransferringOrder] = useState(null); 
+            const [transferTarget, setTransferTarget] = useState(''); 
+            const [transferQty, setTransferQty] = useState(1); // 轉讓數量
             
             // App 風格確認對話框狀態
             const [confirmConfig, setConfirmConfig] = useState(null);
@@ -269,7 +273,6 @@
                 setCurrentMachine(prev => ({ ...prev, priceJPY: jpy, priceTWD: twd }));
             };
 
-            // 價格編輯器
             const openPriceEditor = () => {
                 const list = Object.entries(priceTable).map(([jpy, twd]) => ({ id: Date.now() + Math.random(), jpy: parseInt(jpy), twd: parseInt(twd) }));
                 list.sort((a,b) => a.jpy - b.jpy);
@@ -335,7 +338,6 @@
             const handleSaveEditedOrder = () => {
                 if (!editingOrder) return;
                 
-                // 重新計算金額
                 const ecoTotal = editingOrder.ecoFeePerUnit > 0 ? (ECO_FEE * editingOrder.qty) : 0;
                 const totalTWD = (editingOrder.unitPriceTWD * editingOrder.qty) + ecoTotal;
                 const totalJPY = editingOrder.unitPriceJPY * editingOrder.qty;
@@ -346,7 +348,7 @@
                     productName: editingOrder.productName,
                     variant: editingOrder.variant || '隨機',
                     qty: editingOrder.qty,
-                    unitPriceTWD: editingOrder.unitPriceTWD, // 允許修改單價
+                    unitPriceTWD: editingOrder.unitPriceTWD,
                     ecoFeePerUnit: editingOrder.ecoFeePerUnit,
                     ecoFeeTotal: ecoTotal,
                     gashaTotalJPY: totalJPY,
@@ -356,6 +358,71 @@
 
                 setEditingOrder(null);
                 notify("訂單已更新");
+            };
+
+            // --- 轉讓訂單邏輯 (Transfer with Partial Split) ---
+            const handleTransferOrder = () => {
+                if (!transferringOrder || !transferTarget) return;
+                
+                const cleanTarget = transferTarget.trim();
+                const qtyToTransfer = parseInt(transferQty);
+
+                // Validation
+                if (qtyToTransfer <= 0 || qtyToTransfer > transferringOrder.qty) {
+                    notify("轉讓數量無效 (不能大於持有量)");
+                    return;
+                }
+                
+                triggerConfirm('確認轉讓', `確定將 ${qtyToTransfer} 個商品轉讓給「${cleanTarget}」嗎？\n\n所有權與金額將轉移至新顧客。`, () => {
+                    setOrders(prev => {
+                        // Case 1: Transfer All (Update owner)
+                        if (qtyToTransfer === transferringOrder.qty) {
+                            return prev.map(o => o.id === transferringOrder.id ? { ...o, customer: cleanTarget } : o);
+                        }
+                        
+                        // Case 2: Partial Transfer (Split Order)
+                        const updatedOrders = [];
+                        
+                        // Create New Order for Target
+                        const ecoTotalNew = transferringOrder.ecoFeePerUnit > 0 ? (transferringOrder.ecoFeePerUnit * qtyToTransfer) : 0;
+                        const newOrder = {
+                            ...transferringOrder,
+                            id: Date.now(), // Generate new ID
+                            customer: cleanTarget,
+                            qty: qtyToTransfer,
+                            ecoFeeTotal: ecoTotalNew,
+                            gashaTotalJPY: transferringOrder.unitPriceJPY * qtyToTransfer,
+                            gashaTotalTWD: transferringOrder.unitPriceTWD * qtyToTransfer,
+                            customerTotalTWD: (transferringOrder.unitPriceTWD * qtyToTransfer) + ecoTotalNew
+                        };
+                        updatedOrders.push(newOrder);
+
+                        // Update Original Order (Subtract Qty)
+                        prev.forEach(o => {
+                            if (o.id === transferringOrder.id) {
+                                const leftQty = o.qty - qtyToTransfer;
+                                const ecoTotalLeft = o.ecoFeePerUnit > 0 ? (o.ecoFeePerUnit * leftQty) : 0;
+                                updatedOrders.push({
+                                    ...o,
+                                    qty: leftQty,
+                                    ecoFeeTotal: ecoTotalLeft,
+                                    gashaTotalJPY: o.unitPriceJPY * leftQty,
+                                    gashaTotalTWD: o.unitPriceTWD * leftQty,
+                                    customerTotalTWD: (o.unitPriceTWD * leftQty) + ecoTotalLeft
+                                });
+                            } else {
+                                updatedOrders.push(o);
+                            }
+                        });
+                        
+                        return updatedOrders;
+                    });
+                    
+                    setTransferringOrder(null);
+                    setTransferTarget('');
+                    setTransferQty(1);
+                    notify(`已轉讓 ${qtyToTransfer} 個給 ${cleanTarget}`);
+                });
             };
 
             const handleClearAllData = () => {
@@ -483,7 +550,57 @@
                         </div>
                     )}
 
-                    {/* Order Edit Modal (新增的訂單編輯視窗) */}
+                    {/* Transfer Modal (轉讓確認視窗 - 含數量選擇) */}
+                    {transferringOrder && (
+                        <div className="fixed inset-0 z-[260] flex items-center justify-center p-4 bg-latte-900/40 backdrop-blur-sm animate-in">
+                            <div className="bg-white rounded-[30px] w-full max-w-sm p-6 shadow-2xl space-y-4 flex flex-col">
+                                <div className="flex justify-between items-center border-b border-cream-200 pb-3">
+                                    <h3 className="font-bold text-latte-800 text-lg flex items-center gap-2"><ArrowRightCircle size={20}/> 轉讓訂單</h3>
+                                    <button onClick={()=>{setTransferringOrder(null); setTransferTarget('')}} className="w-8 h-8 rounded-full bg-cream-200 text-latte-500 flex items-center justify-center"><X size={18}/></button>
+                                </div>
+                                <div className="space-y-3">
+                                    <div>
+                                        <p className="text-sm text-latte-500 mb-1">商品：<strong>{transferringOrder.productName}</strong></p>
+                                        <p className="text-xs text-latte-400">目前持有：{transferringOrder.qty} 個</p>
+                                    </div>
+                                    
+                                    {/* 數量選擇器 */}
+                                    <div className="bg-cream-50 p-3 rounded-xl border border-cream-200 flex justify-between items-center">
+                                        <span className="text-sm font-bold text-latte-600">轉讓數量</span>
+                                        <div className="flex items-center gap-3">
+                                            <button onClick={()=>setTransferQty(Math.max(1, transferQty-1))} className="w-8 h-8 rounded-full bg-white shadow flex items-center justify-center text-latte-400 active:scale-90 transition disabled:opacity-50" disabled={transferQty<=1}><Minus size={14}/></button>
+                                            <span className="text-lg font-black w-8 text-center text-latte-800">{transferQty}</span>
+                                            <button onClick={()=>setTransferQty(Math.min(transferringOrder.qty, transferQty+1))} className="w-8 h-8 rounded-full bg-latte-500 text-white shadow flex items-center justify-center active:scale-90 transition disabled:opacity-50" disabled={transferQty>=transferringOrder.qty}><Plus size={14}/></button>
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <p className="text-sm text-latte-500 mb-2">轉讓對象：</p>
+                                        <input 
+                                            autoFocus
+                                            list="customerList"
+                                            placeholder="輸入對方名稱 (或釋出區)..." 
+                                            className="w-full bg-cream-50 border border-cream-200 p-3 rounded-xl outline-none focus:border-latte-400 font-bold text-latte-800" 
+                                            value={transferTarget}
+                                            onChange={e => setTransferTarget(e.target.value)}
+                                        />
+                                        <datalist id="customerList">
+                                            <option value={RELEASE_ZONE_NAME}/>
+                                            {filteredCustomers.map(c => <option key={c.name} value={c.name}/>)}
+                                        </datalist>
+                                        <div className="mt-2 flex flex-wrap gap-2">
+                                            <button onClick={()=>setTransferTarget(RELEASE_ZONE_NAME)} className="text-xs bg-cream-100 text-latte-500 px-3 py-1 rounded-full border border-cream-200">快速選擇: {RELEASE_ZONE_NAME}</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <button onClick={handleTransferOrder} disabled={!transferTarget} className="w-full bg-latte-600 text-white py-3.5 rounded-2xl font-bold shadow-lg shadow-latte-600/20 active:scale-95 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                                    確認轉讓 {transferQty} 個
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Order Edit Modal (訂單編輯視窗 - 含釋出區保護) */}
                     {editingOrder && (
                         <div className="fixed inset-0 z-[250] flex items-center justify-center p-4 bg-latte-900/40 backdrop-blur-sm animate-in">
                             <div className="bg-white rounded-[30px] w-full max-w-sm p-6 shadow-2xl space-y-4 flex flex-col">
@@ -491,39 +608,65 @@
                                     <h3 className="font-bold text-latte-800 text-lg flex items-center gap-2"><Edit size={20}/> 編輯訂單</h3>
                                     <button onClick={()=>setEditingOrder(null)} className="w-8 h-8 rounded-full bg-cream-200 text-latte-500 flex items-center justify-center"><X size={18}/></button>
                                 </div>
-                                <div className="space-y-3 overflow-y-auto max-h-[60vh] p-1">
-                                    <div>
-                                        <label className="text-xs font-bold text-latte-400 ml-1">顧客名稱 (唯讀)</label>
-                                        <div className="w-full bg-cream-50 p-3 rounded-xl font-bold text-latte-600">{editingOrder.customer}</div>
-                                    </div>
-                                    <div>
-                                        <label className="text-xs font-bold text-latte-400 ml-1">機台名稱</label>
-                                        <input className="w-full bg-white border border-cream-200 p-3 rounded-xl outline-none focus:border-latte-400 font-bold text-latte-800" value={editingOrder.productName} onChange={e=>setEditingOrder({...editingOrder, productName: e.target.value})}/>
-                                    </div>
-                                    <div className="flex gap-2">
-                                        <div className="flex-1">
-                                            <label className="text-xs font-bold text-latte-400 ml-1">款式</label>
-                                            <input className="w-full bg-white border border-cream-200 p-3 rounded-xl outline-none focus:border-latte-400 font-bold text-latte-800" value={editingOrder.variant} onChange={e=>setEditingOrder({...editingOrder, variant: e.target.value})}/>
+                                
+                                {editingOrder.customer === RELEASE_ZONE_NAME ? (
+                                    <div className="space-y-4 py-4 text-center">
+                                        <div className="w-16 h-16 bg-cream-100 rounded-full flex items-center justify-center mx-auto text-latte-400">
+                                            <AlertCircle size={32}/>
                                         </div>
-                                        <div className="w-24">
-                                            <label className="text-xs font-bold text-latte-400 ml-1">數量</label>
-                                            <div className="flex items-center bg-white border border-cream-200 rounded-xl p-1">
-                                                <button onClick={()=>setEditingOrder({...editingOrder, qty: Math.max(1, editingOrder.qty-1)})} className="w-8 h-8 flex items-center justify-center text-latte-400 active:scale-90"><Minus size={14}/></button>
-                                                <span className="flex-1 text-center font-bold text-latte-800">{editingOrder.qty}</span>
-                                                <button onClick={()=>setEditingOrder({...editingOrder, qty: editingOrder.qty+1})} className="w-8 h-8 flex items-center justify-center text-latte-400 active:scale-90"><Plus size={14}/></button>
+                                        <h4 className="font-bold text-lg text-latte-800">此為釋出區商品</h4>
+                                        <p className="text-sm text-latte-500">
+                                            釋出區商品為暫存狀態，不可直接修改內容。<br/>
+                                            請先將商品 <strong>轉讓</strong> 給確認認領的顧客，<br/>再進行規格修改。
+                                        </p>
+                                        <button 
+                                            onClick={() => {
+                                                setTransferringOrder(editingOrder);
+                                                setTransferQty(editingOrder.qty); // Default to full qty
+                                                setEditingOrder(null);
+                                            }}
+                                            className="w-full bg-latte-600 text-white py-3.5 rounded-2xl font-bold shadow-lg shadow-latte-600/20 active:scale-95 transition flex items-center justify-center gap-2"
+                                        >
+                                            <ArrowRightCircle size={18}/> 立即轉讓
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <div className="space-y-3 overflow-y-auto max-h-[60vh] p-1">
+                                            <div>
+                                                <label className="text-xs font-bold text-latte-400 ml-1">顧客名稱 (唯讀)</label>
+                                                <div className="w-full bg-cream-50 p-3 rounded-xl font-bold text-latte-600">{editingOrder.customer}</div>
                                             </div>
+                                            <div>
+                                                <label className="text-xs font-bold text-latte-400 ml-1">機台名稱</label>
+                                                <input className="w-full bg-white border border-cream-200 p-3 rounded-xl outline-none focus:border-latte-400 font-bold text-latte-800" value={editingOrder.productName} onChange={e=>setEditingOrder({...editingOrder, productName: e.target.value})}/>
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <div className="flex-1">
+                                                    <label className="text-xs font-bold text-latte-400 ml-1">款式</label>
+                                                    <input className="w-full bg-white border border-cream-200 p-3 rounded-xl outline-none focus:border-latte-400 font-bold text-latte-800" value={editingOrder.variant} onChange={e=>setEditingOrder({...editingOrder, variant: e.target.value})}/>
+                                                </div>
+                                                <div className="w-24">
+                                                    <label className="text-xs font-bold text-latte-400 ml-1">數量</label>
+                                                    <div className="flex items-center bg-white border border-cream-200 rounded-xl p-1">
+                                                        <button onClick={()=>setEditingOrder({...editingOrder, qty: Math.max(1, editingOrder.qty-1)})} className="w-8 h-8 flex items-center justify-center text-latte-400 active:scale-90"><Minus size={14}/></button>
+                                                        <span className="flex-1 text-center font-bold text-latte-800">{editingOrder.qty}</span>
+                                                        <button onClick={()=>setEditingOrder({...editingOrder, qty: editingOrder.qty+1})} className="w-8 h-8 flex items-center justify-center text-latte-400 active:scale-90"><Plus size={14}/></button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <label className="text-xs font-bold text-latte-400 ml-1">單價 (NT$)</label>
+                                                <input type="number" className="w-full bg-white border border-cream-200 p-3 rounded-xl outline-none focus:border-latte-400 font-bold text-latte-800" value={editingOrder.unitPriceTWD} onChange={e=>setEditingOrder({...editingOrder, unitPriceTWD: parseInt(e.target.value)||0})}/>
+                                            </div>
+                                            <button onClick={()=>setEditingOrder({...editingOrder, ecoFeePerUnit: editingOrder.ecoFeePerUnit > 0 ? 0 : ECO_FEE})} className={`w-full py-3 rounded-xl border-2 font-bold transition-all flex items-center justify-center gap-2 ${editingOrder.ecoFeePerUnit > 0 ? 'border-emerald-400 bg-emerald-50 text-emerald-700' : 'border-cream-200 text-latte-300'}`}>
+                                                <span className="text-xs">環保費狀態:</span>
+                                                {editingOrder.ecoFeePerUnit > 0 ? '已啟用 (+10)' : '未啟用'}
+                                            </button>
                                         </div>
-                                    </div>
-                                    <div>
-                                        <label className="text-xs font-bold text-latte-400 ml-1">單價 (NT$)</label>
-                                        <input type="number" className="w-full bg-white border border-cream-200 p-3 rounded-xl outline-none focus:border-latte-400 font-bold text-latte-800" value={editingOrder.unitPriceTWD} onChange={e=>setEditingOrder({...editingOrder, unitPriceTWD: parseInt(e.target.value)||0})}/>
-                                    </div>
-                                    <button onClick={()=>setEditingOrder({...editingOrder, ecoFeePerUnit: editingOrder.ecoFeePerUnit > 0 ? 0 : ECO_FEE})} className={`w-full py-3 rounded-xl border-2 font-bold transition-all flex items-center justify-center gap-2 ${editingOrder.ecoFeePerUnit > 0 ? 'border-emerald-400 bg-emerald-50 text-emerald-700' : 'border-cream-200 text-latte-300'}`}>
-                                        <span className="text-xs">環保費狀態:</span>
-                                        {editingOrder.ecoFeePerUnit > 0 ? '已啟用 (+10)' : '未啟用'}
-                                    </button>
-                                </div>
-                                <button onClick={handleSaveEditedOrder} className="w-full bg-latte-600 text-white py-3.5 rounded-2xl font-bold shadow-lg shadow-latte-600/20 active:scale-95 transition">儲存變更</button>
+                                        <button onClick={handleSaveEditedOrder} className="w-full bg-latte-600 text-white py-3.5 rounded-2xl font-bold shadow-lg shadow-latte-600/20 active:scale-95 transition">儲存變更</button>
+                                    </>
+                                )}
                             </div>
                         </div>
                     )}
@@ -756,6 +899,155 @@
                                     <button onClick={addPriceRow} className="w-full py-3 border border-dashed border-latte-300 rounded-xl text-latte-400 text-sm font-bold hover:bg-cream-50 hover:text-latte-600 transition flex items-center justify-center gap-1"><Plus size={16}/> 新增價格級距</button>
                                 </div>
                                 <button onClick={savePriceEditor} className="w-full bg-latte-600 text-white py-3 rounded-xl font-bold shadow-lg shadow-latte-600/20 active:scale-95 transition">儲存設定</button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Customer Detail Modal (顧客詳情 - 包含轉讓按鈕) */}
+                    {selectedCustomerDetail && (
+                        <div className="fixed inset-0 bg-latte-900/40 backdrop-blur-[2px] z-[160] flex items-end md:items-center justify-center p-0 md:p-4 animate-in">
+                            <div className="bg-white rounded-t-[30px] md:rounded-3xl w-full max-w-md h-[85vh] flex flex-col shadow-2xl">
+                                <div className="p-6 border-b border-cream-200 flex justify-between items-start bg-cream-50 rounded-t-[30px] md:rounded-t-3xl">
+                                    <div><h3 className="text-xl font-bold text-latte-800 flex items-center gap-2"><User size={20}/> {selectedCustomerDetail.name}</h3><div className="text-xs text-latte-500 font-bold mt-2 bg-white px-2 py-1 rounded-lg border border-cream-200 inline-block shadow-sm">總額: ${selectedCustomerDetail.totalSpent.toLocaleString()}</div></div>
+                                    <div className="flex gap-2">
+                                        <button onClick={()=>handleCopyOrderText(selectedCustomerDetail)} className="p-2.5 bg-white border border-cream-200 rounded-xl flex gap-1 text-xs items-center font-bold text-latte-600 shadow-sm active:scale-95" title="複製文案"><ClipboardList size={18}/> 文案</button>
+                                        <button onClick={()=>handleExportToImage(selectedCustomerDetail)} className="p-2.5 bg-white border border-cream-200 rounded-xl flex gap-1 text-xs items-center font-bold text-latte-600 shadow-sm active:scale-95" title="匯出圖片"><ImageIcon size={18}/> 存圖</button>
+                                        <button onClick={()=>setSelectedCustomerDetail(null)} className="p-2.5 bg-cream-200 text-latte-600 rounded-xl active:scale-95"><X size={18}/></button>
+                                    </div>
+                                </div>
+                                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                                    {selectedCustomerDetail.items.map((item,idx)=>(
+                                        <div key={idx} className="flex justify-between items-center p-4 bg-white border border-cream-200 rounded-2xl shadow-sm">
+                                            <div><div className="font-bold text-sm text-latte-800">{item.productName}</div><div className="text-xs text-latte-400 mt-1 font-bold">{item.variant} {item.ecoFeeTotal > 0 && <span className="text-emerald-600 ml-1"> (含環保費)</span>}</div></div>
+                                            <div className="text-right">
+                                                <div className="text-xs text-latte-400 mb-1">x {item.qty}</div>
+                                                <div className="text-sm text-latte-600 font-black">${item.customerTotalTWD}</div>
+                                                <button onClick={()=>{setTransferringOrder(item); setTransferTarget('')}} className="mt-1 text-[10px] bg-cream-100 text-latte-500 px-2 py-1 rounded border border-cream-200 flex items-center gap-1 hover:bg-cream-200 transition"><ArrowRightCircle size={10}/> 轉讓</button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Transfer Modal (轉讓確認視窗 - 含數量選擇) */}
+                    {transferringOrder && (
+                        <div className="fixed inset-0 z-[260] flex items-center justify-center p-4 bg-latte-900/40 backdrop-blur-sm animate-in">
+                            <div className="bg-white rounded-[30px] w-full max-w-sm p-6 shadow-2xl space-y-4 flex flex-col">
+                                <div className="flex justify-between items-center border-b border-cream-200 pb-3">
+                                    <h3 className="font-bold text-latte-800 text-lg flex items-center gap-2"><ArrowRightCircle size={20}/> 轉讓訂單</h3>
+                                    <button onClick={()=>{setTransferringOrder(null); setTransferTarget('')}} className="w-8 h-8 rounded-full bg-cream-200 text-latte-500 flex items-center justify-center"><X size={18}/></button>
+                                </div>
+                                <div className="space-y-3">
+                                    <div>
+                                        <p className="text-sm text-latte-500 mb-1">商品：<strong>{transferringOrder.productName}</strong></p>
+                                        <p className="text-xs text-latte-400">目前持有：{transferringOrder.qty} 個</p>
+                                    </div>
+                                    
+                                    {/* 數量選擇器 */}
+                                    <div className="bg-cream-50 p-3 rounded-xl border border-cream-200 flex justify-between items-center">
+                                        <span className="text-sm font-bold text-latte-600">轉讓數量</span>
+                                        <div className="flex items-center gap-3">
+                                            <button onClick={()=>setTransferQty(Math.max(1, transferQty-1))} className="w-8 h-8 rounded-full bg-white shadow flex items-center justify-center text-latte-400 active:scale-90 transition disabled:opacity-50" disabled={transferQty<=1}><Minus size={14}/></button>
+                                            <span className="text-lg font-black w-8 text-center text-latte-800">{transferQty}</span>
+                                            <button onClick={()=>setTransferQty(Math.min(transferringOrder.qty, transferQty+1))} className="w-8 h-8 rounded-full bg-latte-500 text-white shadow flex items-center justify-center active:scale-90 transition disabled:opacity-50" disabled={transferQty>=transferringOrder.qty}><Plus size={14}/></button>
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <p className="text-sm text-latte-500 mb-2">轉讓對象：</p>
+                                        <input 
+                                            autoFocus
+                                            list="customerList"
+                                            placeholder="輸入對方名稱 (或釋出區)..." 
+                                            className="w-full bg-cream-50 border border-cream-200 p-3 rounded-xl outline-none focus:border-latte-400 font-bold text-latte-800" 
+                                            value={transferTarget}
+                                            onChange={e => setTransferTarget(e.target.value)}
+                                        />
+                                        <datalist id="customerList">
+                                            <option value={RELEASE_ZONE_NAME}/>
+                                            {filteredCustomers.map(c => <option key={c.name} value={c.name}/>)}
+                                        </datalist>
+                                        <div className="mt-2 flex flex-wrap gap-2">
+                                            <button onClick={()=>setTransferTarget(RELEASE_ZONE_NAME)} className="text-xs bg-cream-100 text-latte-500 px-3 py-1 rounded-full border border-cream-200">快速選擇: {RELEASE_ZONE_NAME}</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <button onClick={handleTransferOrder} disabled={!transferTarget} className="w-full bg-latte-600 text-white py-3.5 rounded-2xl font-bold shadow-lg shadow-latte-600/20 active:scale-95 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                                    確認轉讓 {transferQty} 個
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Order Edit Modal (訂單編輯視窗 - 含釋出區保護) */}
+                    {editingOrder && (
+                        <div className="fixed inset-0 z-[250] flex items-center justify-center p-4 bg-latte-900/40 backdrop-blur-sm animate-in">
+                            <div className="bg-white rounded-[30px] w-full max-w-sm p-6 shadow-2xl space-y-4 flex flex-col">
+                                <div className="flex justify-between items-center border-b border-cream-200 pb-3">
+                                    <h3 className="font-bold text-latte-800 text-lg flex items-center gap-2"><Edit size={20}/> 編輯訂單</h3>
+                                    <button onClick={()=>setEditingOrder(null)} className="w-8 h-8 rounded-full bg-cream-200 text-latte-500 flex items-center justify-center"><X size={18}/></button>
+                                </div>
+                                
+                                {editingOrder.customer === RELEASE_ZONE_NAME ? (
+                                    <div className="space-y-4 py-4 text-center">
+                                        <div className="w-16 h-16 bg-cream-100 rounded-full flex items-center justify-center mx-auto text-latte-400">
+                                            <AlertCircle size={32}/>
+                                        </div>
+                                        <h4 className="font-bold text-lg text-latte-800">此為釋出區商品</h4>
+                                        <p className="text-sm text-latte-500">
+                                            釋出區商品為暫存狀態，不可直接修改內容。<br/>
+                                            請先將商品 <strong>轉讓</strong> 給確認認領的顧客，<br/>再進行規格修改。
+                                        </p>
+                                        <button 
+                                            onClick={() => {
+                                                setTransferringOrder(editingOrder);
+                                                setTransferQty(editingOrder.qty); // Default to full qty
+                                                setEditingOrder(null);
+                                            }}
+                                            className="w-full bg-latte-600 text-white py-3.5 rounded-2xl font-bold shadow-lg shadow-latte-600/20 active:scale-95 transition flex items-center justify-center gap-2"
+                                        >
+                                            <ArrowRightCircle size={18}/> 立即轉讓
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <div className="space-y-3 overflow-y-auto max-h-[60vh] p-1">
+                                            <div>
+                                                <label className="text-xs font-bold text-latte-400 ml-1">顧客名稱 (唯讀)</label>
+                                                <div className="w-full bg-cream-50 p-3 rounded-xl font-bold text-latte-600">{editingOrder.customer}</div>
+                                            </div>
+                                            <div>
+                                                <label className="text-xs font-bold text-latte-400 ml-1">機台名稱</label>
+                                                <input className="w-full bg-white border border-cream-200 p-3 rounded-xl outline-none focus:border-latte-400 font-bold text-latte-800" value={editingOrder.productName} onChange={e=>setEditingOrder({...editingOrder, productName: e.target.value})}/>
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <div className="flex-1">
+                                                    <label className="text-xs font-bold text-latte-400 ml-1">款式</label>
+                                                    <input className="w-full bg-white border border-cream-200 p-3 rounded-xl outline-none focus:border-latte-400 font-bold text-latte-800" value={editingOrder.variant} onChange={e=>setEditingOrder({...editingOrder, variant: e.target.value})}/>
+                                                </div>
+                                                <div className="w-24">
+                                                    <label className="text-xs font-bold text-latte-400 ml-1">數量</label>
+                                                    <div className="flex items-center bg-white border border-cream-200 rounded-xl p-1">
+                                                        <button onClick={()=>setEditingOrder({...editingOrder, qty: Math.max(1, editingOrder.qty-1)})} className="w-8 h-8 flex items-center justify-center text-latte-400 active:scale-90"><Minus size={14}/></button>
+                                                        <span className="flex-1 text-center font-bold text-latte-800">{editingOrder.qty}</span>
+                                                        <button onClick={()=>setEditingOrder({...editingOrder, qty: editingOrder.qty+1})} className="w-8 h-8 flex items-center justify-center text-latte-400 active:scale-90"><Plus size={14}/></button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <label className="text-xs font-bold text-latte-400 ml-1">單價 (NT$)</label>
+                                                <input type="number" className="w-full bg-white border border-cream-200 p-3 rounded-xl outline-none focus:border-latte-400 font-bold text-latte-800" value={editingOrder.unitPriceTWD} onChange={e=>setEditingOrder({...editingOrder, unitPriceTWD: parseInt(e.target.value)||0})}/>
+                                            </div>
+                                            <button onClick={()=>setEditingOrder({...editingOrder, ecoFeePerUnit: editingOrder.ecoFeePerUnit > 0 ? 0 : ECO_FEE})} className={`w-full py-3 rounded-xl border-2 font-bold transition-all flex items-center justify-center gap-2 ${editingOrder.ecoFeePerUnit > 0 ? 'border-emerald-400 bg-emerald-50 text-emerald-700' : 'border-cream-200 text-latte-300'}`}>
+                                                <span className="text-xs">環保費狀態:</span>
+                                                {editingOrder.ecoFeePerUnit > 0 ? '已啟用 (+10)' : '未啟用'}
+                                            </button>
+                                        </div>
+                                        <button onClick={handleSaveEditedOrder} className="w-full bg-latte-600 text-white py-3.5 rounded-2xl font-bold shadow-lg shadow-latte-600/20 active:scale-95 transition">儲存變更</button>
+                                    </>
+                                )}
                             </div>
                         </div>
                     )}
