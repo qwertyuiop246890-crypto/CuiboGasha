@@ -42,11 +42,16 @@
                     },
                     animation: {
                         'in': 'fadeIn 0.3s ease-out forwards',
+                        'bounce-sm': 'bounceSmall 0.3s ease-in-out',
                     },
                     keyframes: {
                         fadeIn: {
-                            '0%': { opacity: '0', transform: 'translateY(5px)' },
-                            '100%': { opacity: '1', transform: 'translateY(0)' },
+                            '0%': { opacity: '0', transform: 'translateY(10px) scale(0.95)' },
+                            '100%': { opacity: '1', transform: 'translateY(0) scale(1)' },
+                        },
+                        bounceSmall: {
+                            '0%, 100%': { transform: 'scale(1)' },
+                            '50%': { transform: 'scale(0.95)' },
                         }
                     }
                 }
@@ -61,6 +66,7 @@
             color: #5E4B41; /* 主要文字顏色 */
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
             touch-action: manipulation; /* 優化觸控 */
+            -webkit-font-smoothing: antialiased;
         }
 
         /* 隱藏卷軸但保留功能 */
@@ -159,59 +165,48 @@
             CheckCircle2, Truck, DollarSign, Search, X, ChevronRight, ClipboardList, 
             User, ListOrdered, Tag, CheckSquare, Trash2, Edit, Save, 
             Image as ImageIcon, Download, Loader2, Coins, Circle, ShoppingCart, Settings,
-            Cloud, Upload, FileJson, FileSpreadsheet, RefreshCcw
+            Cloud, Upload, FileJson, FileSpreadsheet, RefreshCcw, Minus
         } from 'https://esm.sh/lucide-react@0.263.1?dev';
 
         const App = () => {
-            // --- 1. 核心設定 (Core Settings) ---
+            // --- 1. 核心設定 ---
             const DEFAULT_PRICE_TABLE = {
                 100: 50, 200: 80, 300: 120, 400: 140, 
                 500: 170, 600: 190, 800: 260, 1000: 360, 1500: 450
             };
-            const ECO_FEE = 10; // 環保費預設值
+            const ECO_FEE = 10; 
 
-            // --- 2. 狀態管理 (State Management) ---
-            
-            // 讀取/儲存資料
+            // --- 2. 狀態管理 ---
             const loadLocal = (key, def) => {
                 const saved = localStorage.getItem(key);
                 return saved ? JSON.parse(saved) : def;
             };
 
-            // 訂單資料
             const [orders, setOrders] = useState(() => loadLocal('cuibo_gasha_orders', []));
-            
-            // 價格表 (可編輯)
             const [priceTable, setPriceTable] = useState(() => loadLocal('cuibo_gasha_pricetable', DEFAULT_PRICE_TABLE));
-
-            // API URL
             const [apiUrl, setApiUrl] = useState(() => localStorage.getItem('cuibo_gasha_api_url') || '');
 
-            // 機台設定 (輸入區暫存)
-            const [currentMachine, setCurrentMachine] = useState({
-                name: '',
-                priceJPY: 500, // 預設 500
-                priceTWD: 170, // 對應 500
-                variant: '隨機'
-            });
-
-            // 訂單輸入 (輸入區暫存)
+            // 輸入區暫存
+            const [currentMachine, setCurrentMachine] = useState({ name: '', priceJPY: 500, priceTWD: 170, variant: '隨機' });
             const [inputCustomer, setInputCustomer] = useState('');
             const [inputQty, setInputQty] = useState(1);
             const [isEco, setIsEco] = useState(false);
 
             // UI 狀態
-            const [activeTab, setActiveTab] = useState('input'); // input, list, customers, dashboard
+            const [activeTab, setActiveTab] = useState('input'); 
             const [searchQuery, setSearchQuery] = useState('');
             const [selectedCustomerDetail, setSelectedCustomerDetail] = useState(null);
             const [notification, setNotification] = useState(null);
-            const [exportTargetCustomer, setExportTargetCustomer] = useState(null); // 圖片匯出用
+            const [exportTargetCustomer, setExportTargetCustomer] = useState(null);
             const [isSyncing, setIsSyncing] = useState(false);
             
             // 編輯器狀態
             const [showPriceEditor, setShowPriceEditor] = useState(false);
             const [editingPrices, setEditingPrices] = useState([]);
             const [showGlobalSettings, setShowGlobalSettings] = useState(false);
+            
+            // App 風格確認對話框狀態
+            const [confirmConfig, setConfirmConfig] = useState(null); // { title, message, onConfirm, type: 'danger' | 'info' }
 
             const fileInputRef = useRef(null);
 
@@ -220,28 +215,25 @@
             useEffect(() => { localStorage.setItem('cuibo_gasha_pricetable', JSON.stringify(priceTable)); }, [priceTable]);
             useEffect(() => { localStorage.setItem('cuibo_gasha_api_url', apiUrl); }, [apiUrl]);
 
-            // --- 3. 邏輯計算 (Calculations) ---
-
+            // --- 3. 邏輯計算 ---
             const notify = (msg) => {
                 setNotification(msg);
                 setTimeout(() => setNotification(null), 3000);
             };
 
-            // 顧客列表聚合
+            // 觸發 App 風格確認視窗
+            const triggerConfirm = (title, message, onConfirm, type = 'info') => {
+                setConfirmConfig({ title, message, onConfirm, type });
+            };
+
             const customerList = useMemo(() => {
                 const map = {};
                 orders.forEach(o => {
                     if (!map[o.customer]) {
-                        map[o.customer] = { 
-                            name: o.customer, 
-                            totalSpent: 0, 
-                            items: [],
-                            orderCount: 0
-                        };
+                        map[o.customer] = { name: o.customer, totalSpent: 0, items: [], orderCount: 0 };
                     }
                     map[o.customer].orderCount += 1;
                     map[o.customer].totalSpent += o.customerTotalTWD;
-                    
                     map[o.customer].items.push({
                         ...o,
                         itemTotal: o.customerTotalTWD,
@@ -251,10 +243,8 @@
                 return Object.values(map).sort((a,b) => b.totalSpent - a.totalSpent);
             }, [orders]);
 
-            // 過濾後的顧客
             const filteredCustomers = customerList.filter(c => c.name.includes(searchQuery));
 
-            // 全局統計
             const stats = useMemo(() => {
                 const totalRevenue = orders.reduce((acc, o) => acc + o.customerTotalTWD, 0);
                 const totalJPY = orders.reduce((acc, o) => acc + o.gashaTotalJPY, 0);
@@ -264,53 +254,27 @@
                 return { totalRevenue, totalJPY, totalCount, pendingPurchase, pendingPick };
             }, [orders]);
 
-            const filteredOrders = orders.filter(o => 
-                o.customer.includes(searchQuery) || o.productName.includes(searchQuery)
-            );
+            const filteredOrders = orders.filter(o => o.customer.includes(searchQuery) || o.productName.includes(searchQuery));
 
-            // --- 4. 操作處理 (Handlers) ---
-
-            // 機台定價選擇
+            // --- 4. 操作處理 ---
             const handlePriceSelect = (jpy) => {
                 const twd = priceTable[jpy] || 0;
-                setCurrentMachine(prev => ({
-                    ...prev,
-                    priceJPY: jpy,
-                    priceTWD: twd
-                }));
+                setCurrentMachine(prev => ({ ...prev, priceJPY: jpy, priceTWD: twd }));
             };
 
-            // 價格表編輯器相關
+            // 價格編輯器
             const openPriceEditor = () => {
-                const list = Object.entries(priceTable).map(([jpy, twd]) => ({
-                    id: Date.now() + Math.random(),
-                    jpy: parseInt(jpy),
-                    twd: parseInt(twd)
-                }));
+                const list = Object.entries(priceTable).map(([jpy, twd]) => ({ id: Date.now() + Math.random(), jpy: parseInt(jpy), twd: parseInt(twd) }));
                 list.sort((a,b) => a.jpy - b.jpy);
                 setEditingPrices(list);
                 setShowPriceEditor(true);
             };
-
-            const addPriceRow = () => {
-                setEditingPrices(prev => [...prev, { id: Date.now(), jpy: '', twd: '' }]);
-            };
-
-            const removePriceRow = (id) => {
-                setEditingPrices(prev => prev.filter(p => p.id !== id));
-            };
-
-            const updatePriceRow = (id, field, val) => {
-                setEditingPrices(prev => prev.map(p => p.id === id ? { ...p, [field]: parseInt(val) || '' } : p));
-            };
-
+            const addPriceRow = () => setEditingPrices(prev => [...prev, { id: Date.now(), jpy: '', twd: '' }]);
+            const removePriceRow = (id) => setEditingPrices(prev => prev.filter(p => p.id !== id));
+            const updatePriceRow = (id, field, val) => setEditingPrices(prev => prev.map(p => p.id === id ? { ...p, [field]: parseInt(val) || '' } : p));
             const savePriceEditor = () => {
                 const newTable = {};
-                editingPrices.forEach(p => {
-                    if (p.jpy && p.twd) {
-                        newTable[p.jpy] = p.twd;
-                    }
-                });
+                editingPrices.forEach(p => { if (p.jpy && p.twd) newTable[p.jpy] = p.twd; });
                 setPriceTable(newTable);
                 setShowPriceEditor(false);
                 notify("價格表已更新");
@@ -323,11 +287,6 @@
 
                 const unitPriceTWD = currentMachine.priceTWD;
                 const ecoTotal = isEco ? (ECO_FEE * inputQty) : 0;
-                
-                const gashaTotalJPY = currentMachine.priceJPY * inputQty;
-                const gashaTotalTWD = unitPriceTWD * inputQty;
-                const customerTotalTWD = gashaTotalTWD + ecoTotal;
-
                 const newOrder = {
                     id: Date.now(),
                     date: new Date().toISOString().split('T')[0],
@@ -339,13 +298,12 @@
                     unitPriceTWD: unitPriceTWD,
                     ecoFeePerUnit: isEco ? ECO_FEE : 0,
                     ecoFeeTotal: ecoTotal,
-                    gashaTotalJPY: gashaTotalJPY,
-                    gashaTotalTWD: gashaTotalTWD,
-                    customerTotalTWD: customerTotalTWD,
+                    gashaTotalJPY: currentMachine.priceJPY * inputQty,
+                    gashaTotalTWD: unitPriceTWD * inputQty,
+                    customerTotalTWD: (unitPriceTWD * inputQty) + ecoTotal,
                     isPurchased: false,
                     isPicked: false
                 };
-
                 setOrders(prev => [newOrder, ...prev]);
                 setInputCustomer('');
                 setInputQty(1);
@@ -356,30 +314,24 @@
                 setOrders(prev => prev.map(o => o.id === id ? { ...o, [field]: !o[field] } : o));
             };
 
+            // 刪除訂單 - 使用自訂 Modal
             const deleteOrder = (id) => {
-                if(confirm("確定刪除此筆訂單？")) setOrders(prev => prev.filter(o => o.id !== id));
+                triggerConfirm('刪除訂單', '確定要刪除這筆訂單嗎？刪除後無法復原。', () => {
+                    setOrders(prev => prev.filter(o => o.id !== id));
+                    notify("訂單已刪除");
+                }, 'danger');
             };
 
-            // --- 資料管理功能 (Data Management) ---
-
+            // 清除資料 - 使用自訂 Modal
             const handleClearAllData = () => {
-                if(confirm("⚠️ 嚴重警告：此操作將清除「所有訂單資料」！\n\n(您的自訂價格表與API設定會保留)\n\n確定要執行嗎？")) {
-                    if(confirm("再次確認：您已經備份了嗎？刪除後無法復原！")) {
-                        setOrders([]);
-                        notify("系統資料已清空");
-                        setShowGlobalSettings(false);
-                    }
-                }
+                triggerConfirm('⚠️ 危險操作', '此操作將「永久清除所有訂單資料」！\n(價格設定會保留)\n\n您確定要繼續嗎？', () => {
+                    setOrders([]);
+                    notify("系統資料已清空");
+                    setShowGlobalSettings(false);
+                }, 'danger');
             };
 
-            // 1. JSON 備份/還原 (Local Backup)
-            const handleExportBackup = () => {
-                const data = { orders, priceTable, timestamp: new Date().toISOString() };
-                const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-                saveAs(blob, `CuiboGasha_Backup_${new Date().toISOString().slice(0,10)}.json`);
-                notify("完整備份已下載");
-            };
-
+            // 還原備份 - 使用自訂 Modal
             const handleImportBackup = (event) => {
                 const file = event.target.files[0];
                 if (!file) return;
@@ -388,53 +340,45 @@
                     try {
                         const data = JSON.parse(e.target.result);
                         if (data.orders) {
-                            if(confirm(`確定還原備份檔？\n備份時間: ${data.timestamp}\n\n這將覆蓋您當前的資料！`)) {
+                            triggerConfirm('還原備份', `備份時間: ${data.timestamp}\n\n確定還原？這將覆蓋您目前所有的資料！`, () => {
                                 setOrders(data.orders);
                                 if(data.priceTable) setPriceTable(data.priceTable);
                                 notify("資料還原成功");
                                 setShowGlobalSettings(false);
-                            }
+                            }, 'danger');
                         } else {
                             notify("無效的備份檔案");
                         }
-                    } catch (err) { notify("讀取失敗，請確認檔案格式"); }
+                    } catch (err) { notify("讀取失敗，格式錯誤"); }
                     event.target.value = '';
                 };
                 reader.readAsText(file);
             };
 
-            // 2. CSV 匯出 (Export for Google Sheets)
-            const handleExportCSV = () => {
-                const bom = "\uFEFF"; // UTF-8 BOM for Excel
-                const header = "訂單日期,顧客名稱,機台名稱,款式,數量,單價(日幣),單價(台幣),環保費小計,台幣總金額,投幣狀態,撿貨狀態\n";
-                const rows = orders.map(o => 
-                    `${o.date},${o.customer},${o.productName},${o.variant},${o.qty},${o.unitPriceJPY},${o.unitPriceTWD},${o.ecoFeeTotal},${o.customerTotalTWD},${o.isPurchased?'已投':'未投'},${o.isPicked?'已撿':'未撿'}`
-                ).join("\n");
-                
-                const blob = new Blob([bom + header + rows], { type: "text/csv;charset=utf-8" });
-                saveAs(blob, `CuiboGasha_Sheet_${new Date().toISOString().slice(0,10)}.csv`);
-                notify("CSV 已匯出，可匯入 Google Sheet");
+            const handleExportBackup = () => {
+                const data = { orders, priceTable, timestamp: new Date().toISOString() };
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+                saveAs(blob, `CuiboGasha_Backup_${new Date().toISOString().slice(0,10)}.json`);
+                notify("完整備份已下載");
             };
 
-            // 3. Google Cloud Sync (GAS)
+            const handleExportCSV = () => {
+                const bom = "\uFEFF"; 
+                const header = "訂單日期,顧客名稱,機台名稱,款式,數量,單價(日幣),單價(台幣),環保費小計,台幣總金額,投幣狀態,撿貨狀態\n";
+                const rows = orders.map(o => `${o.date},${o.customer},${o.productName},${o.variant},${o.qty},${o.unitPriceJPY},${o.unitPriceTWD},${o.ecoFeeTotal},${o.customerTotalTWD},${o.isPurchased?'已投':'未投'},${o.isPicked?'已撿':'未撿'}`).join("\n");
+                const blob = new Blob([bom + header + rows], { type: "text/csv;charset=utf-8" });
+                saveAs(blob, `CuiboGasha_Sheet_${new Date().toISOString().slice(0,10)}.csv`);
+                notify("CSV 已匯出");
+            };
+
+            // 雲端同步 - 使用自訂 Modal
             const handleCloudUpload = async () => {
                 if(!apiUrl) { notify("請先設定 Google Script URL"); return; }
                 setIsSyncing(true);
                 try {
-                    // Google Apps Script usually needs text/plain to avoid CORS preflight issues for simple POSTs
-                    await fetch(apiUrl, { 
-                        method: 'POST', 
-                        mode: 'no-cors',
-                        headers: { 'Content-Type': 'text/plain' }, 
-                        body: JSON.stringify({ orders, priceTable, timestamp: new Date().toISOString() }) 
-                    });
-                    notify("已發送上傳請求 (Blind Upload)");
-                } catch(e) { 
-                    console.error(e);
-                    notify("上傳失敗，請檢查網路或 URL"); 
-                } finally { 
-                    setIsSyncing(false); 
-                }
+                    await fetch(apiUrl, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ orders, priceTable, timestamp: new Date().toISOString() }) });
+                    notify("已發送上傳請求");
+                } catch(e) { notify("上傳失敗"); } finally { setIsSyncing(false); }
             };
 
             const handleCloudDownload = async () => {
@@ -442,58 +386,27 @@
                 setIsSyncing(true);
                 try {
                     const res = await fetch(apiUrl);
-                    if (!res.ok) throw new Error('Network response was not ok');
+                    if (!res.ok) throw new Error('Error');
                     const data = await res.json();
-                    
                     if(data.orders){
-                        if(confirm(`雲端備份時間: ${data.timestamp}\n\n確定要下載並覆蓋目前資料嗎？`)){
+                        triggerConfirm('雲端同步', `雲端備份時間: ${data.timestamp}\n\n確定下載並覆蓋目前資料？`, () => {
                             setOrders(data.orders);
                             if(data.priceTable) setPriceTable(data.priceTable);
-                            notify("雲端同步成功！");
+                            notify("雲端同步成功");
                             setShowGlobalSettings(false);
-                        }
-                    } else {
-                        notify("雲端無有效資料");
-                    }
-                } catch(e) { 
-                    console.error(e);
-                    notify("下載失敗，請檢查 URL"); 
-                } finally { 
-                    setIsSyncing(false); 
-                }
+                        }, 'danger');
+                    } else { notify("雲端無資料"); }
+                } catch(e) { notify("下載失敗"); } finally { setIsSyncing(false); }
             };
 
             // --- 5. 顧客詳情功能 ---
             const handleCopyOrderText = (customer) => {
                 if (!customer) return;
-                let text = `親愛的 ${customer.name} 您好，\n`;
-                text += `您本次的扭蛋明細如下：\n\n`;
-                customer.items.forEach(item => {
-                    text += `${item.productName} ${item.variant !== '隨機' ? `(${item.variant})` : ''} x ${item.qty} $${item.customerTotalTWD}`;
-                    if(item.ecoFeeTotal > 0) text += ` (含環保費)`;
-                    text += `\n`;
-                });
-                text += `----------------\n`;
-                text += `消費總額：$${customer.totalSpent.toLocaleString()}\n\n`;
-                text += `可以先幫我搭波卻可\n`;
-                text += `有誤的話～請趕快跟我說！\n`;
-                text += `₊⊹ 若是沒有漏掉的商品 ₊⊹\n`;
-                text += `就可以直接結帳囉！\n`;
-                text += `網址：（這裡留給我自己輸入網址）\n`;
-                text += `找到自己名字後完成下單就可以嚕\n`;
-                text += `𐙚 收到所有連結後請盡速完成付款\n`;
-                text += `   不要耽誤到最佳的賞味期限唷\n\n`;
-                text += `⚝ p.s. 前一次連線有開箱分享的朋友~\n`;
-                text += `下單後請幫我備註一下：開箱禮\n`;
-                text += `𝐭𝐡𝐚𝐧𝐤 𝐲𝐨𝐮 („• ֊ •„)੭`;
-                const textArea = document.createElement("textarea");
-                textArea.value = text;
-                document.body.appendChild(textArea);
-                textArea.select();
-                try {
-                    document.execCommand('copy');
-                    notify("文案已複製！");
-                } catch (err) { notify("複製失敗"); }
+                let text = `親愛的 ${customer.name} 您好，\n您本次的連線購物明細如下：\n\n`;
+                customer.items.forEach(item => { text += `${item.productName} ${item.variant !== '隨機' ? `(${item.variant})` : ''} x ${item.qty} $${item.customerTotalTWD}${item.ecoFeeTotal > 0 ? ` (含環保費)` : ''}\n`; });
+                text += `----------------\n消費總額：$${customer.totalSpent.toLocaleString()}\n\n可以先幫我搭波卻可\n有誤的話～請趕快跟我說！\n₊⊹ 若是沒有漏掉的商品 ₊⊹\n就可以直接結帳囉！\n網址：（這裡留給我自己輸入網址）\n找到自己名字後完成下單就可以嚕\n𐙚 收到所有連結後請盡速完成付款\n   不要耽誤到最佳的賞味期限唷\n\n⚝ p.s. 前一次連線有開箱分享的朋友~\n下單後請幫我備註一下：開箱禮\n𝐭𝐡𝐚𝐧𝐤 𝐲𝐨𝐮 („• ֊ •„)੭`;
+                const textArea = document.createElement("textarea"); textArea.value = text; document.body.appendChild(textArea); textArea.select();
+                try { document.execCommand('copy'); notify("文案已複製！"); } catch (err) { notify("複製失敗"); }
                 document.body.removeChild(textArea);
             };
 
@@ -506,19 +419,39 @@
                 try {
                     const canvas = await html2canvas(element, { useCORS: true, backgroundColor: '#FCF4E9', scale: 2 });
                     const dataUrl = canvas.toDataURL('image/png');
-                    const link = document.createElement('a');
-                    link.download = `${customer.name}_扭蛋明細.png`;
-                    link.href = dataUrl;
-                    link.click();
+                    const link = document.createElement('a'); link.download = `${customer.name}_扭蛋明細.png`; link.href = dataUrl; link.click();
                     notify("圖片已下載");
-                } catch (err) { notify("匯出失敗"); } 
-                finally { setExportTargetCustomer(null); }
+                } catch (err) { notify("匯出失敗"); } finally { setExportTargetCustomer(null); }
             };
 
-            // --- 6. 介面渲染 (Render) ---
+            // --- 6. 介面渲染 ---
             return (
-                <div className="min-h-screen pb-24">
+                <div className="min-h-screen pb-24 relative">
                     
+                    {/* App 風格確認對話框 (Custom Modal) */}
+                    {confirmConfig && (
+                        <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-latte-900/40 backdrop-blur-sm animate-in">
+                            <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl space-y-4 border border-cream-200">
+                                <h3 className={`font-bold text-xl flex items-center gap-2 ${confirmConfig.type === 'danger' ? 'text-rose-500' : 'text-latte-800'}`}>
+                                    {confirmConfig.type === 'danger' && <AlertCircle size={24}/>}
+                                    {confirmConfig.title}
+                                </h3>
+                                <p className="text-latte-600 text-sm whitespace-pre-line leading-relaxed font-medium">
+                                    {confirmConfig.message}
+                                </p>
+                                <div className="flex gap-3 pt-2">
+                                    <button onClick={() => setConfirmConfig(null)} className="flex-1 py-3.5 rounded-2xl font-bold bg-cream-100 text-latte-500 hover:bg-cream-200 active:scale-95 transition-all">
+                                        取消
+                                    </button>
+                                    <button onClick={() => { confirmConfig.onConfirm(); setConfirmConfig(null); }} className={`flex-1 py-3.5 rounded-2xl font-bold text-white shadow-lg active:scale-95 transition-all flex justify-center items-center gap-1 ${confirmConfig.type === 'danger' ? 'bg-rose-500 shadow-rose-200 hover:bg-rose-600' : 'bg-latte-500 shadow-latte-200 hover:bg-latte-600'}`}>
+                                        {confirmConfig.type === 'danger' ? <Trash2 size={18}/> : <CheckCircle2 size={18}/>}
+                                        確認
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     {/* Hidden Receipt */}
                     {exportTargetCustomer && (
                         <div id="hidden-receipt-container">
@@ -527,46 +460,23 @@
                                     <div className="receipt-title">{exportTargetCustomer.name} 的扭蛋清單</div>
                                     <div className="receipt-subtitle">{new Date().toLocaleString()}</div>
                                 </div>
-                                <div className="receipt-info">
-                                    <span>訂單編號: {Date.now().toString().slice(-6)}</span>
-                                    <span>客戶: {exportTargetCustomer.name}</span>
-                                </div>
+                                <div className="receipt-info"><span>訂單: {Date.now().toString().slice(-6)}</span><span>客戶: {exportTargetCustomer.name}</span></div>
                                 <table className="receipt-table">
-                                    <thead>
-                                        <tr>
-                                            <th className="col-name">機台 / 規格</th>
-                                            <th className="col-price">單價</th>
-                                            <th className="col-qty">數</th>
-                                            <th className="col-total">小計</th>
-                                        </tr>
-                                    </thead>
+                                    <thead><tr><th className="col-name">機台 / 規格</th><th className="col-price">單價</th><th className="col-qty">數</th><th className="col-total">小計</th></tr></thead>
                                     <tbody>
                                         {exportTargetCustomer.items.map((item, idx) => (
-                                            <tr key={idx}>
-                                                <td className="col-name">
-                                                    <span className="item-name">{item.productName}</span>
-                                                    <span className="item-spec">{item.variant}{item.ecoFeeTotal > 0 && <span className="item-eco">含環保費</span>}</span>
-                                                </td>
-                                                <td className="col-price">${item.unitPriceTWD}</td>
-                                                <td className="col-qty">{item.qty}</td>
-                                                <td className="col-total">${item.customerTotalTWD}</td>
-                                            </tr>
+                                            <tr key={idx}><td className="col-name"><span className="item-name">{item.productName}</span><span className="item-spec">{item.variant}{item.ecoFeeTotal > 0 && <span className="item-eco">含環保費</span>}</span></td><td className="col-price">${item.unitPriceTWD}</td><td className="col-qty">{item.qty}</td><td className="col-total">${item.customerTotalTWD}</td></tr>
                                         ))}
                                     </tbody>
                                 </table>
-                                <div className="receipt-summary">
-                                    <div className="summary-total">
-                                        <span>總金額:</span>
-                                        <span>${exportTargetCustomer.totalSpent.toLocaleString()}</span>
-                                    </div>
-                                </div>
+                                <div className="receipt-summary"><div className="summary-total"><span>總金額:</span><span>${exportTargetCustomer.totalSpent.toLocaleString()}</span></div></div>
                                 <div className="receipt-footer">感謝您的購買！(„• ֊ •„)੭</div>
                             </div>
                         </div>
                     )}
 
                     {/* Toast */}
-                    {notification && <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[300] bg-latte-800 text-cream-50 px-6 py-3 rounded-2xl shadow-xl flex items-center gap-2 animate-in border border-latte-600"><CheckCircle2 size={18} className="text-cream-200" />{notification}</div>}
+                    {notification && <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[300] bg-latte-800 text-cream-50 px-6 py-3 rounded-2xl shadow-xl flex items-center gap-2 animate-in border border-latte-600"><CheckCircle2 size={18} className="text-cream-200" />{notification}</div>}
 
                     {/* Header */}
                     <div className="bg-latte-500 text-cream-50 p-4 shadow-sm sticky top-0 z-50 flex justify-between items-center max-w-2xl mx-auto shadow-latte-200">
@@ -582,11 +492,7 @@
                          <div className="flex max-w-2xl mx-auto overflow-x-auto no-scrollbar">
                             {[{id:'input',l:'連線',i:Plus},{id:'list',l:'清單',i:ListOrdered},{id:'customers',l:'顧客',i:Users},{id:'dashboard',l:'儀表板',i:LayoutDashboard}].map(t => (
                                 <button key={t.id} onClick={() => {setActiveTab(t.id); setSearchQuery('')}} className={`flex-1 py-4 px-2 flex flex-col items-center gap-1 text-[11px] font-bold transition-all ${activeTab === t.id ? 'text-latte-500 border-b-2 border-latte-500 bg-cream-50' : 'text-latte-300'}`}>
-                                    <div className="relative">
-                                        <t.i size={20}/>
-                                        {t.id === 'list' && stats.pendingPick > 0 && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-rose-500 rounded-full border border-white"></span>}
-                                    </div>
-                                    {t.l}
+                                    <div className="relative"><t.i size={20}/>{t.id === 'list' && stats.pendingPick > 0 && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-rose-500 rounded-full border border-white"></span>}</div>{t.l}
                                 </button>
                             ))}
                         </div>
@@ -594,90 +500,29 @@
 
                     {/* Main Content */}
                     <main className="max-w-2xl mx-auto p-4 space-y-5">
-                        
                         {/* 1. Input Tab */}
                         {activeTab === 'input' && (
                             <div className="space-y-4 animate-in">
-                                {/* 機台設定 */}
                                 <div className="bg-white rounded-3xl p-5 shadow-soft border border-cream-200">
-                                    <div className="flex justify-between items-center mb-2">
-                                        <div className="text-xs font-bold text-latte-400 tracking-wider flex items-center gap-1"><Tag size={12}/> 機台設定 (鎖定中)</div>
-                                        <button onClick={openPriceEditor} className="text-[10px] text-latte-500 bg-cream-100 px-2 py-1 rounded border border-cream-200 flex items-center gap-1 hover:bg-cream-200 active:scale-95 transition"><Edit size={10}/> 編輯價格</button>
-                                    </div>
-                                    <input 
-                                        type="text" 
-                                        placeholder="輸入機台名稱 (例: 吉伊卡哇)" 
-                                        className="w-full text-lg font-bold border-b-2 border-cream-200 focus:border-latte-400 outline-none pb-2 mb-4 placeholder-latte-300 bg-transparent text-latte-800"
-                                        value={currentMachine.name}
-                                        onChange={e => setCurrentMachine({...currentMachine, name: e.target.value})}
-                                    />
-                                    
-                                    {/* 價格按鈕 */}
-                                    <div className="grid grid-cols-4 gap-2 mb-4">
-                                        {Object.keys(priceTable).map(Number).sort((a,b)=>a-b).map(price => (
-                                            <button 
-                                                key={price}
-                                                onClick={() => handlePriceSelect(price)}
-                                                className={`py-2 rounded-xl text-sm font-bold transition-all ${currentMachine.priceJPY === price ? 'price-btn-active' : 'price-btn'}`}
-                                            >
-                                                ¥{price}
-                                            </button>
-                                        ))}
-                                    </div>
-                                    
-                                    <div className="flex justify-between items-center bg-cream-50 p-3 rounded-2xl border border-cream-200">
-                                        <div className="text-xs text-latte-400 font-bold">自動換算</div>
-                                        <div className="font-black text-latte-600 flex items-baseline gap-1">
-                                            <span className="text-sm font-normal text-latte-400">¥{currentMachine.priceJPY} =</span>
-                                            <span className="text-xl">NT${currentMachine.priceTWD}</span>
-                                        </div>
-                                    </div>
-
-                                    <div className="mt-3">
-                                        <input 
-                                            type="text" 
-                                            placeholder="款式 (預設隨機)" 
-                                            className="w-full text-sm bg-cream-50 rounded-xl p-3 outline-none text-latte-800"
-                                            value={currentMachine.variant}
-                                            onChange={e => setCurrentMachine({...currentMachine, variant: e.target.value})}
-                                        />
-                                    </div>
+                                    <div className="flex justify-between items-center mb-2"><div className="text-xs font-bold text-latte-400 tracking-wider flex items-center gap-1"><Tag size={12}/> 機台設定 (鎖定中)</div><button onClick={openPriceEditor} className="text-[10px] text-latte-500 bg-cream-100 px-2 py-1 rounded border border-cream-200 flex items-center gap-1 hover:bg-cream-200 active:scale-95 transition"><Edit size={10}/> 編輯價格</button></div>
+                                    <input type="text" placeholder="輸入機台名稱 (例: 吉伊卡哇)" className="w-full text-lg font-bold border-b-2 border-cream-200 focus:border-latte-400 outline-none pb-2 mb-4 placeholder-latte-300 bg-transparent text-latte-800" value={currentMachine.name} onChange={e => setCurrentMachine({...currentMachine, name: e.target.value})}/>
+                                    <div className="grid grid-cols-4 gap-2 mb-4">{Object.keys(priceTable).map(Number).sort((a,b)=>a-b).map(price => (<button key={price} onClick={() => handlePriceSelect(price)} className={`py-2 rounded-xl text-sm font-bold transition-all ${currentMachine.priceJPY === price ? 'price-btn-active' : 'price-btn'}`}>¥{price}</button>))}</div>
+                                    <div className="flex justify-between items-center bg-cream-50 p-3 rounded-2xl border border-cream-200"><div className="text-xs text-latte-400 font-bold">自動換算</div><div className="font-black text-latte-600 flex items-baseline gap-1"><span className="text-sm font-normal text-latte-400">¥{currentMachine.priceJPY} =</span><span className="text-xl">NT${currentMachine.priceTWD}</span></div></div>
+                                    <div className="mt-3"><input type="text" placeholder="款式 (預設隨機)" className="w-full text-sm bg-cream-50 rounded-xl p-3 outline-none text-latte-800" value={currentMachine.variant} onChange={e => setCurrentMachine({...currentMachine, variant: e.target.value})}/></div>
                                 </div>
 
-                                {/* 喊單卡片 */}
                                 <div className="bg-white rounded-3xl p-5 shadow-lg border-2 border-latte-200">
-                                    <div className="flex items-center gap-3 mb-5">
-                                        <div className="w-10 h-10 bg-cream-100 rounded-full flex items-center justify-center text-latte-400"><User size={20}/></div>
-                                        <input 
-                                            type="text" 
-                                            placeholder="誰要買? (輸入顧客名)" 
-                                            className="flex-1 bg-cream-50 rounded-xl py-3 px-4 font-bold text-lg outline-none focus:ring-2 ring-latte-300 text-latte-800"
-                                            value={inputCustomer}
-                                            onChange={e => setInputCustomer(e.target.value)}
-                                        />
-                                    </div>
-
+                                    <div className="flex items-center gap-3 mb-5"><div className="w-10 h-10 bg-cream-100 rounded-full flex items-center justify-center text-latte-400"><User size={20}/></div><input type="text" placeholder="誰要買? (輸入顧客名)" className="flex-1 bg-cream-50 rounded-xl py-3 px-4 font-bold text-lg outline-none focus:ring-2 ring-latte-300 text-latte-800" value={inputCustomer} onChange={e => setInputCustomer(e.target.value)}/></div>
                                     <div className="flex items-center justify-between mb-6">
                                         <div className="flex items-center gap-3 bg-cream-50 rounded-full p-1 border border-cream-200">
-                                            <button onClick={() => setInputQty(Math.max(1, inputQty-1))} className="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-latte-400 active:scale-90 transition"><ArrowRight size={18} className="rotate-180"/></button>
+                                            {/* 這裡改用 Minus 圖示 */}
+                                            <button onClick={() => setInputQty(Math.max(1, inputQty-1))} className="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-latte-400 active:scale-90 transition"><Minus size={18}/></button>
                                             <span className="text-xl font-black w-8 text-center text-latte-800">{inputQty}</span>
                                             <button onClick={() => setInputQty(inputQty+1)} className="w-10 h-10 rounded-full bg-latte-500 text-white shadow-md flex items-center justify-center active:scale-90 transition"><Plus size={18}/></button>
                                         </div>
-                                        <button 
-                                            onClick={() => setIsEco(!isEco)}
-                                            className={`flex flex-col items-center justify-center px-4 py-2 rounded-2xl border-2 transition-all ${isEco ? 'border-emerald-400 bg-emerald-50 text-emerald-700' : 'border-cream-200 text-latte-300 bg-white'}`}
-                                        >
-                                            <span className="text-[10px] font-bold">拆殼/環保</span>
-                                            <span className="font-bold text-sm">+{isEco ? `$${ECO_FEE*inputQty}` : '$0'}</span>
-                                        </button>
+                                        <button onClick={() => setIsEco(!isEco)} className={`flex flex-col items-center justify-center px-4 py-2 rounded-2xl border-2 transition-all ${isEco ? 'border-emerald-400 bg-emerald-50 text-emerald-700' : 'border-cream-200 text-latte-300 bg-white'}`}><span className="text-[10px] font-bold">拆殼/環保</span><span className="font-bold text-sm">+{isEco ? `$${ECO_FEE*inputQty}` : '$0'}</span></button>
                                     </div>
-
-                                    <button onClick={addOrder} className="w-full bg-latte-800 text-cream-50 py-4 rounded-2xl font-bold text-lg shadow-lg shadow-latte-800/20 active:scale-98 transition flex items-center justify-center gap-2 hover:brightness-110">
-                                        <span>加入清單</span>
-                                        <span className="bg-white/20 px-2 py-0.5 rounded text-sm">
-                                            ${(currentMachine.priceTWD * inputQty) + (isEco ? ECO_FEE * inputQty : 0)}
-                                        </span>
-                                    </button>
+                                    <button onClick={addOrder} className="w-full bg-latte-800 text-cream-50 py-4 rounded-2xl font-bold text-lg shadow-lg shadow-latte-800/20 active:scale-98 transition flex items-center justify-center gap-2 hover:brightness-110"><span>加入清單</span><span className="bg-white/20 px-2 py-0.5 rounded text-sm">${(currentMachine.priceTWD * inputQty) + (isEco ? ECO_FEE * inputQty : 0)}</span></button>
                                 </div>
                                 {orders.length > 0 && <div className="text-center text-xs text-latte-400 opacity-70">剛加入: {orders[0].customer} - {orders[0].productName} (${orders[0].customerTotalTWD})</div>}
                             </div>
@@ -686,22 +531,12 @@
                         {/* 2. List Tab */}
                         {activeTab === 'list' && (
                             <div className="space-y-3 animate-in">
-                                <div className="relative mb-4">
-                                    <input type="text" placeholder="搜尋清單..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full bg-white rounded-xl p-3 pl-10 border border-cream-200 outline-none focus:border-latte-400 text-latte-800" />
-                                    <Search size={16} className="absolute left-3 top-3.5 text-latte-300" />
-                                </div>
+                                <div className="relative mb-4"><input type="text" placeholder="搜尋清單..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full bg-white rounded-xl p-3 pl-10 border border-cream-200 outline-none focus:border-latte-400 text-latte-800" /><Search size={16} className="absolute left-3 top-3.5 text-latte-300" /></div>
                                 {filteredOrders.map(o => (
                                     <div key={o.id} className={`bg-white p-4 rounded-3xl shadow-soft border border-cream-200 transition-all ${o.isPicked ? 'opacity-60 bg-cream-50' : ''}`}>
                                         <div className="flex justify-between items-start mb-3">
-                                            <div>
-                                                <div className="font-bold text-latte-800 text-lg">{o.customer}</div>
-                                                <div className="text-xs text-latte-500 font-bold">{o.productName} <span className="text-latte-300 font-normal">({o.variant})</span></div>
-                                                <div className="mt-1 text-xs bg-cream-100 inline-block px-2 py-0.5 rounded text-latte-600 font-bold border border-cream-200">¥{o.unitPriceJPY} x {o.qty}{o.ecoFeeTotal > 0 && <span className="text-emerald-600 ml-1">+環保</span>}</div>
-                                            </div>
-                                            <div className="text-right">
-                                                <div className="text-xl font-black text-latte-600">${o.customerTotalTWD}</div>
-                                                <button onClick={() => deleteOrder(o.id)} className="text-cream-300 p-2 hover:text-rose-400"><Trash2 size={16}/></button>
-                                            </div>
+                                            <div><div className="font-bold text-latte-800 text-lg">{o.customer}</div><div className="text-xs text-latte-500 font-bold">{o.productName} <span className="text-latte-300 font-normal">({o.variant})</span></div><div className="mt-1 text-xs bg-cream-100 inline-block px-2 py-0.5 rounded text-latte-600 font-bold border border-cream-200">¥{o.unitPriceJPY} x {o.qty}{o.ecoFeeTotal > 0 && <span className="text-emerald-600 ml-1">+環保</span>}</div></div>
+                                            <div className="text-right"><div className="text-xl font-black text-latte-600">${o.customerTotalTWD}</div><button onClick={() => deleteOrder(o.id)} className="text-cream-300 p-2 hover:text-rose-400"><Trash2 size={16}/></button></div>
                                         </div>
                                         <div className="grid grid-cols-2 gap-3">
                                             <button onClick={() => toggleStatus(o.id, 'isPurchased')} className={`text-xs py-2 rounded-xl font-bold flex items-center justify-center gap-1 transition-colors border ${o.isPurchased ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-cream-50 text-latte-300 border-cream-200'}`}><Coins size={14}/> {o.isPurchased ? '已投幣' : '未投幣'}</button>
@@ -716,19 +551,11 @@
                         {/* 3. Customers Tab */}
                         {activeTab === 'customers' && (
                             <div className="space-y-2 animate-in">
-                                <div className="flex justify-between items-center px-2 mb-2">
-                                    <span className="text-xs font-bold text-latte-400">共 {filteredCustomers.length} 位顧客</span>
-                                </div>
+                                <div className="flex justify-between items-center px-2 mb-2"><span className="text-xs font-bold text-latte-400">共 {filteredCustomers.length} 位顧客</span></div>
                                 {filteredCustomers.map(c => (
                                     <div key={c.name} onClick={() => setSelectedCustomerDetail(c)} className="bg-white rounded-3xl p-5 shadow-soft border border-cream-200 flex justify-between items-center cursor-pointer mb-2 active:scale-[0.99] transition-all hover:border-latte-200">
-                                        <div className="flex items-center gap-4">
-                                            <div className="w-12 h-12 bg-cream-100 text-latte-600 rounded-full flex items-center justify-center font-bold border border-cream-200 text-lg shadow-sm">{c.name[0]}</div>
-                                            <div><h4 className="font-bold text-latte-800 text-lg">{c.name}</h4><p className="text-xs text-latte-400">{c.orderCount} 筆訂單</p></div>
-                                        </div>
-                                        <div className="text-right">
-                                            <p className="font-black text-latte-500 text-lg">${c.totalSpent.toLocaleString()}</p>
-                                            <div className="text-[10px] text-latte-300 bg-cream-50 px-2 py-0.5 rounded-lg inline-block">點擊查看</div>
-                                        </div>
+                                        <div className="flex items-center gap-4"><div className="w-12 h-12 bg-cream-100 text-latte-600 rounded-full flex items-center justify-center font-bold border border-cream-200 text-lg shadow-sm">{c.name[0]}</div><div><h4 className="font-bold text-latte-800 text-lg">{c.name}</h4><p className="text-xs text-latte-400">{c.orderCount} 筆訂單</p></div></div>
+                                        <div className="text-right"><p className="font-black text-latte-500 text-lg">${c.totalSpent.toLocaleString()}</p><div className="text-[10px] text-latte-300 bg-cream-50 px-2 py-0.5 rounded-lg inline-block">點擊查看</div></div>
                                     </div>
                                 ))}
                             </div>
@@ -737,74 +564,34 @@
                         {/* 4. Dashboard Tab */}
                         {activeTab === 'dashboard' && (
                             <div className="grid grid-cols-2 gap-4 animate-in">
-                                <div className="bg-[#D98E73] text-white p-6 rounded-3xl shadow-lg relative overflow-hidden">
-                                    <div className="absolute top-0 right-0 p-4 opacity-10"><Coins size={80}/></div>
-                                    <p className="text-xs font-bold opacity-90 tracking-wider">日幣總投需求</p>
-                                    <p className="text-3xl font-black mt-2">¥{stats.totalJPY.toLocaleString()}</p>
-                                    <p className="text-xs opacity-70 mt-1">共 {stats.totalCount} 顆</p>
-                                </div>
-                                <div className="bg-[#BF9E85] text-white p-6 rounded-3xl shadow-lg relative overflow-hidden">
-                                    <div className="absolute top-0 right-0 p-4 opacity-10"><DollarSign size={80}/></div>
-                                    <p className="text-xs font-bold opacity-90 tracking-wider">預估台幣營收</p>
-                                    <p className="text-3xl font-black mt-2">${stats.totalRevenue.toLocaleString()}</p>
-                                </div>
-                                <div className="col-span-2 bg-white p-6 rounded-3xl border border-cream-200 shadow-sm flex justify-around text-center">
-                                    <div><div className="text-3xl font-black text-latte-400">{stats.pendingPurchase}</div><div className="text-xs text-latte-300 font-bold mt-1">未投幣</div></div>
-                                    <div className="w-px bg-cream-200"></div>
-                                    <div><div className="text-3xl font-black text-latte-600">{stats.pendingPick}</div><div className="text-xs text-latte-300 font-bold mt-1">待撿貨</div></div>
-                                </div>
+                                <div className="bg-[#D98E73] text-white p-6 rounded-3xl shadow-lg relative overflow-hidden"><div className="absolute top-0 right-0 p-4 opacity-10"><Coins size={80}/></div><p className="text-xs font-bold opacity-90 tracking-wider">日幣總投需求</p><p className="text-3xl font-black mt-2">¥{stats.totalJPY.toLocaleString()}</p><p className="text-xs opacity-70 mt-1">共 {stats.totalCount} 顆</p></div>
+                                <div className="bg-[#BF9E85] text-white p-6 rounded-3xl shadow-lg relative overflow-hidden"><div className="absolute top-0 right-0 p-4 opacity-10"><DollarSign size={80}/></div><p className="text-xs font-bold opacity-90 tracking-wider">預估台幣營收</p><p className="text-3xl font-black mt-2">${stats.totalRevenue.toLocaleString()}</p></div>
+                                <div className="col-span-2 bg-white p-6 rounded-3xl border border-cream-200 shadow-sm flex justify-around text-center"><div><div className="text-3xl font-black text-latte-400">{stats.pendingPurchase}</div><div className="text-xs text-latte-300 font-bold mt-1">未投幣</div></div><div className="w-px bg-cream-200"></div><div><div className="text-3xl font-black text-latte-600">{stats.pendingPick}</div><div className="text-xs text-latte-300 font-bold mt-1">待撿貨</div></div></div>
                             </div>
                         )}
                     </main>
 
-                    {/* --- Modals --- */}
-
-                    {/* Global Settings Modal */}
+                    {/* --- Global Settings Modal --- */}
                     {showGlobalSettings && (
                         <div className="fixed inset-0 bg-latte-900/40 backdrop-blur-[2px] z-[200] flex items-center justify-center p-4">
                             <div className="bg-white rounded-[30px] w-full max-w-md p-6 space-y-5 shadow-2xl animate-in max-h-[85vh] overflow-y-auto">
-                                <div className="flex justify-between items-center border-b border-cream-200 pb-3">
-                                    <h3 className="font-bold text-latte-800 text-lg flex items-center gap-2"><Settings size={20}/> 系統設定</h3>
-                                    <button onClick={()=>setShowGlobalSettings(false)} className="w-8 h-8 rounded-full bg-cream-200 text-latte-500 flex items-center justify-center"><X size={18}/></button>
-                                </div>
-
-                                {/* Cloud Sync Section */}
+                                <div className="flex justify-between items-center border-b border-cream-200 pb-3"><h3 className="font-bold text-latte-800 text-lg flex items-center gap-2"><Settings size={20}/> 系統設定</h3><button onClick={()=>setShowGlobalSettings(false)} className="w-8 h-8 rounded-full bg-cream-200 text-latte-500 flex items-center justify-center"><X size={18}/></button></div>
                                 <div className="space-y-3">
                                     <h4 className="text-xs font-bold text-latte-400 uppercase tracking-wide">Google 雲端同步 (Apps Script)</h4>
                                     <input type="text" placeholder="輸入 Google Apps Script URL..." className="w-full bg-cream-50 border border-cream-200 p-3 rounded-xl outline-none text-latte-800 text-xs focus:border-latte-400" value={apiUrl} onChange={e=>setApiUrl(e.target.value)}/>
                                     <div className="grid grid-cols-2 gap-2">
-                                        <button onClick={handleCloudUpload} disabled={isSyncing} className="bg-indigo-500 text-white py-3 rounded-xl font-bold shadow-md shadow-indigo-200 active:scale-95 transition flex flex-col items-center justify-center gap-1 disabled:opacity-50">
-                                            {isSyncing ? <Loader2 size={18} className="animate-spin"/> : <Cloud size={18}/>}
-                                            <span className="text-xs">上傳雲端 (備份)</span>
-                                        </button>
-                                        <button onClick={handleCloudDownload} disabled={isSyncing} className="bg-emerald-500 text-white py-3 rounded-xl font-bold shadow-md shadow-emerald-200 active:scale-95 transition flex flex-col items-center justify-center gap-1 disabled:opacity-50">
-                                            {isSyncing ? <Loader2 size={18} className="animate-spin"/> : <RefreshCcw size={18}/>}
-                                            <span className="text-xs">下載同步 (還原)</span>
-                                        </button>
+                                        <button onClick={handleCloudUpload} disabled={isSyncing} className="bg-indigo-500 text-white py-3 rounded-xl font-bold shadow-md shadow-indigo-200 active:scale-95 transition flex flex-col items-center justify-center gap-1 disabled:opacity-50">{isSyncing ? <Loader2 size={18} className="animate-spin"/> : <Cloud size={18}/>}<span className="text-xs">上傳雲端 (備份)</span></button>
+                                        <button onClick={handleCloudDownload} disabled={isSyncing} className="bg-emerald-500 text-white py-3 rounded-xl font-bold shadow-md shadow-emerald-200 active:scale-95 transition flex flex-col items-center justify-center gap-1 disabled:opacity-50">{isSyncing ? <Loader2 size={18} className="animate-spin"/> : <RefreshCcw size={18}/>}<span className="text-xs">下載同步 (還原)</span></button>
                                     </div>
                                 </div>
-
-                                {/* Local Data Management */}
                                 <div className="space-y-3 pt-2 border-t border-cream-100">
                                     <h4 className="text-xs font-bold text-latte-400 uppercase tracking-wide">本機資料管理</h4>
-                                    
-                                    <button onClick={handleExportCSV} className="w-full bg-white border border-latte-200 text-latte-700 py-3 rounded-xl font-bold shadow-sm flex items-center justify-center gap-2 active:scale-95 transition">
-                                        <FileSpreadsheet size={18} className="text-green-600"/> 匯出 Excel / Sheets (CSV)
-                                    </button>
-
+                                    <button onClick={handleExportCSV} className="w-full bg-white border border-latte-200 text-latte-700 py-3 rounded-xl font-bold shadow-sm flex items-center justify-center gap-2 active:scale-95 transition"><FileSpreadsheet size={18} className="text-green-600"/> 匯出 Excel / Sheets (CSV)</button>
                                     <div className="grid grid-cols-2 gap-2">
-                                        <button onClick={handleExportBackup} className="bg-latte-100 text-latte-600 py-3 rounded-xl font-bold flex items-center justify-center gap-1 active:scale-95 transition">
-                                            <FileJson size={16}/> 備份檔案
-                                        </button>
-                                        <label className="bg-latte-100 text-latte-600 py-3 rounded-xl font-bold flex items-center justify-center gap-1 active:scale-95 transition cursor-pointer">
-                                            <Upload size={16}/> 還原檔案
-                                            <input type="file" className="hidden" ref={fileInputRef} onChange={handleImportBackup} accept=".json"/>
-                                        </label>
+                                        <button onClick={handleExportBackup} className="bg-latte-100 text-latte-600 py-3 rounded-xl font-bold flex items-center justify-center gap-1 active:scale-95 transition"><FileJson size={16}/> 備份檔案</button>
+                                        <label className="bg-latte-100 text-latte-600 py-3 rounded-xl font-bold flex items-center justify-center gap-1 active:scale-95 transition cursor-pointer"><Upload size={16}/> 還原檔案<input type="file" className="hidden" ref={fileInputRef} onChange={handleImportBackup} accept=".json"/></label>
                                     </div>
-
-                                    <button onClick={handleClearAllData} className="w-full bg-rose-50 border border-rose-100 text-rose-500 py-3 rounded-xl font-bold mt-2 flex items-center justify-center gap-2 active:scale-95 transition hover:bg-rose-100">
-                                        <Trash2 size={18}/> 清除所有資料
-                                    </button>
+                                    <button onClick={handleClearAllData} className="w-full bg-rose-50 border border-rose-100 text-rose-500 py-3 rounded-xl font-bold mt-2 flex items-center justify-center gap-2 active:scale-95 transition hover:bg-rose-100"><Trash2 size={18}/> 清除所有資料</button>
                                 </div>
                             </div>
                         </div>
@@ -814,16 +601,9 @@
                     {showPriceEditor && (
                         <div className="fixed inset-0 bg-latte-900/40 backdrop-blur-[2px] z-[200] flex items-center justify-center p-4">
                             <div className="bg-white rounded-[30px] w-full max-w-md p-6 space-y-4 shadow-2xl animate-in max-h-[85vh] flex flex-col">
-                                <div className="flex justify-between items-center border-b border-cream-200 pb-3">
-                                    <h3 className="font-bold text-latte-800 text-lg flex items-center gap-2"><Edit size={20}/> 定價管理</h3>
-                                    <button onClick={()=>setShowPriceEditor(false)} className="w-8 h-8 rounded-full bg-cream-200 text-latte-500 flex items-center justify-center"><X size={18}/></button>
-                                </div>
+                                <div className="flex justify-between items-center border-b border-cream-200 pb-3"><h3 className="font-bold text-latte-800 text-lg flex items-center gap-2"><Edit size={20}/> 定價管理</h3><button onClick={()=>setShowPriceEditor(false)} className="w-8 h-8 rounded-full bg-cream-200 text-latte-500 flex items-center justify-center"><X size={18}/></button></div>
                                 <div className="flex-1 overflow-y-auto space-y-2 p-1">
-                                    <div className="flex gap-2 text-xs font-bold text-latte-400 px-2">
-                                        <span className="flex-1">日幣 (¥)</span>
-                                        <span className="flex-1">台幣 ($)</span>
-                                        <span className="w-8"></span>
-                                    </div>
+                                    <div className="flex gap-2 text-xs font-bold text-latte-400 px-2"><span className="flex-1">日幣 (¥)</span><span className="flex-1">台幣 ($)</span><span className="w-8"></span></div>
                                     {editingPrices.map(p => (
                                         <div key={p.id} className="flex gap-2 items-center">
                                             <input type="number" placeholder="日幣" className="flex-1 bg-cream-50 border border-cream-200 p-2 rounded-xl text-center font-bold text-latte-800 outline-none focus:border-latte-400" value={p.jpy} onChange={e=>updatePriceRow(p.id, 'jpy', e.target.value)}/>
