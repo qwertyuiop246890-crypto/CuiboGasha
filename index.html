@@ -467,7 +467,7 @@
             const handleCopyOrderText = (customer) => {
                 if (!customer) return;
                 let text = `親愛的 ${customer.name} 您好，\n`;
-                text += `您本次的連線購物明細如下：\n\n`;
+                text += `您本次的扭蛋明細如下：\n\n`;
                 customer.items.forEach(item => {
                     text += `${item.productName} ${item.variant !== '隨機' ? `(${item.variant})` : ''} x ${item.qty} $${item.customerTotalTWD}`;
                     if(item.ecoFeeTotal > 0) text += ` (含環保費)`;
