@@ -165,7 +165,7 @@
             CheckCircle2, Truck, DollarSign, Search, X, ChevronRight, ClipboardList, 
             User, ListOrdered, Tag, CheckSquare, Trash2, Edit, Save, 
             Image as ImageIcon, Download, Loader2, Coins, Circle, ShoppingCart, Settings,
-            Cloud, Upload, FileJson, FileSpreadsheet, RefreshCcw, Minus, ArrowRightCircle
+            Cloud, Upload, FileJson, FileSpreadsheet, RefreshCcw, Minus, ArrowRightCircle, Filter
         } from 'https://esm.sh/lucide-react@0.263.1?dev';
 
         const App = () => {
@@ -206,6 +206,12 @@
             const [editingPrices, setEditingPrices] = useState([]);
             const [showGlobalSettings, setShowGlobalSettings] = useState(false);
             
+            // 儀表板詳情與狀態更新狀態
+            const [showDashboardDetail, setShowDashboardDetail] = useState(null); // 'purchase' | 'pick' | null
+            const [dashboardSearchQuery, setDashboardSearchQuery] = useState(''); // 儀表板內篩選
+            const [statusUpdateData, setStatusUpdateData] = useState(null); // { order, targetStatus, maxQty }
+            const [statusUpdateQty, setStatusUpdateQty] = useState(1);
+
             // 訂單編輯與轉讓
             const [editingOrder, setEditingOrder] = useState(null); 
             const [transferringOrder, setTransferringOrder] = useState(null); 
@@ -267,6 +273,36 @@
                 (o.variant && o.variant.includes(searchQuery))
             );
 
+            // Dashboard Detail Helper
+            const getDashboardDetailOrders = () => {
+                let list = [];
+                if (showDashboardDetail === 'purchase') {
+                    list = orders.filter(o => !o.isPurchased);
+                } else if (showDashboardDetail === 'pick') {
+                    list = orders.filter(o => o.isPurchased && !o.isPicked);
+                }
+                
+                // 儀表板內的篩選邏輯
+                if (dashboardSearchQuery) {
+                    list = list.filter(o => o.customer.includes(dashboardSearchQuery));
+                }
+
+                // Sort by Product Name to group same machine items together
+                return list.sort((a, b) => a.productName.localeCompare(b.productName));
+            };
+
+            // 取得儀表板清單中涉及的所有顧客（用於快速篩選按鈕）
+            const uniqueCustomersInDashboard = useMemo(() => {
+                let list = [];
+                if (showDashboardDetail === 'purchase') {
+                    list = orders.filter(o => !o.isPurchased);
+                } else if (showDashboardDetail === 'pick') {
+                    list = orders.filter(o => o.isPurchased && !o.isPicked);
+                }
+                const names = [...new Set(list.map(o => o.customer))];
+                return names.sort();
+            }, [orders, showDashboardDetail]);
+
             // --- 4. 操作處理 ---
             const handlePriceSelect = (jpy) => {
                 const twd = priceTable[jpy] || 0;
@@ -323,8 +359,80 @@
                 notify(`已加入: ${newOrder.customer}`);
             };
 
+            // 一般清單中的切換 (全部切換)
             const toggleStatus = (id, field) => {
                 setOrders(prev => prev.map(o => o.id === id ? { ...o, [field]: !o[field] } : o));
+            };
+
+            // --- 儀表板中的狀態更新 (支援數量拆分) ---
+            const initiateStatusUpdate = (order, targetStatus) => {
+                // 如果只有 1 個，直接切換狀態
+                if (order.qty === 1) {
+                    setOrders(prev => prev.map(o => o.id === order.id ? { ...o, [targetStatus]: true } : o));
+                    notify("狀態已更新");
+                    return;
+                }
+                
+                // 超過 1 個，開啟數量選擇視窗
+                setStatusUpdateData({ order, targetStatus, maxQty: order.qty });
+                setStatusUpdateQty(order.qty); // 預設選取全部 (這就是 User 要求的"預設為需要採買的數量")
+            };
+
+            const confirmStatusUpdate = () => {
+                if (!statusUpdateData) return;
+                
+                const { order, targetStatus } = statusUpdateData;
+                const qtyToUpdate = parseInt(statusUpdateQty);
+                
+                if (qtyToUpdate <= 0 || qtyToUpdate > order.qty) return;
+
+                setOrders(prev => {
+                    // Case 1: 全部更新 (Update All)
+                    if (qtyToUpdate === order.qty) {
+                        return prev.map(o => o.id === order.id ? { ...o, [targetStatus]: true } : o);
+                    }
+                    
+                    // Case 2: 部分更新 (Split Order)
+                    const updatedOrders = [];
+                    
+                    // New Order (Processed Part)
+                    const ecoTotalNew = order.ecoFeePerUnit > 0 ? (order.ecoFeePerUnit * qtyToUpdate) : 0;
+                    const newOrder = {
+                        ...order,
+                        id: Date.now(),
+                        qty: qtyToUpdate,
+                        ecoFeeTotal: ecoTotalNew,
+                        gashaTotalJPY: order.unitPriceJPY * qtyToUpdate,
+                        gashaTotalTWD: order.unitPriceTWD * qtyToUpdate,
+                        customerTotalTWD: (order.unitPriceTWD * qtyToUpdate) + ecoTotalNew,
+                        [targetStatus]: true // Set new status to true
+                    };
+                    updatedOrders.push(newOrder);
+
+                    // Update Original Order (Remaining Part)
+                    prev.forEach(o => {
+                        if (o.id === order.id) {
+                            const leftQty = o.qty - qtyToUpdate;
+                            const ecoTotalLeft = o.ecoFeePerUnit > 0 ? (o.ecoFeePerUnit * leftQty) : 0;
+                            updatedOrders.push({
+                                ...o,
+                                qty: leftQty,
+                                ecoFeeTotal: ecoTotalLeft,
+                                gashaTotalJPY: o.unitPriceJPY * leftQty,
+                                gashaTotalTWD: o.unitPriceTWD * leftQty,
+                                customerTotalTWD: (o.unitPriceTWD * leftQty) + ecoTotalLeft
+                                // Original status remains false (unprocessed)
+                            });
+                        } else {
+                            updatedOrders.push(o);
+                        }
+                    });
+                    
+                    return updatedOrders;
+                });
+
+                setStatusUpdateData(null);
+                notify(`已更新 ${qtyToUpdate} 個狀態`);
             };
 
             const deleteOrder = (id) => {
@@ -367,7 +475,6 @@
                 const cleanTarget = transferTarget.trim();
                 const qtyToTransfer = parseInt(transferQty);
 
-                // Validation
                 if (qtyToTransfer <= 0 || qtyToTransfer > transferringOrder.qty) {
                     notify("轉讓數量無效 (不能大於持有量)");
                     return;
@@ -375,19 +482,15 @@
                 
                 triggerConfirm('確認轉讓', `確定將 ${qtyToTransfer} 個商品轉讓給「${cleanTarget}」嗎？\n\n所有權與金額將轉移至新顧客。`, () => {
                     setOrders(prev => {
-                        // Case 1: Transfer All (Update owner)
                         if (qtyToTransfer === transferringOrder.qty) {
                             return prev.map(o => o.id === transferringOrder.id ? { ...o, customer: cleanTarget } : o);
                         }
                         
-                        // Case 2: Partial Transfer (Split Order)
                         const updatedOrders = [];
-                        
-                        // Create New Order for Target
                         const ecoTotalNew = transferringOrder.ecoFeePerUnit > 0 ? (transferringOrder.ecoFeePerUnit * qtyToTransfer) : 0;
                         const newOrder = {
                             ...transferringOrder,
-                            id: Date.now(), // Generate new ID
+                            id: Date.now(),
                             customer: cleanTarget,
                             qty: qtyToTransfer,
                             ecoFeeTotal: ecoTotalNew,
@@ -397,7 +500,6 @@
                         };
                         updatedOrders.push(newOrder);
 
-                        // Update Original Order (Subtract Qty)
                         prev.forEach(o => {
                             if (o.id === transferringOrder.id) {
                                 const leftQty = o.qty - qtyToTransfer;
@@ -546,6 +648,40 @@
                                         確認
                                     </button>
                                 </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Status Update Modal (新增：儀表板狀態更新視窗) */}
+                    {statusUpdateData && (
+                        <div className="fixed inset-0 z-[260] flex items-center justify-center p-4 bg-latte-900/40 backdrop-blur-sm animate-in">
+                            <div className="bg-white rounded-[30px] w-full max-w-sm p-6 shadow-2xl space-y-4 flex flex-col">
+                                <div className="flex justify-between items-center border-b border-cream-200 pb-3">
+                                    <h3 className="font-bold text-latte-800 text-lg flex items-center gap-2">
+                                        {statusUpdateData.targetStatus === 'isPurchased' ? <Coins size={20}/> : <ShoppingBag size={20}/>}
+                                        {statusUpdateData.targetStatus === 'isPurchased' ? '確認投幣數量' : '確認撿貨數量'}
+                                    </h3>
+                                    <button onClick={()=>{setStatusUpdateData(null)}} className="w-8 h-8 rounded-full bg-cream-200 text-latte-500 flex items-center justify-center"><X size={18}/></button>
+                                </div>
+                                <div className="space-y-3">
+                                    <div>
+                                        <p className="text-sm text-latte-500 mb-1">商品：<strong>{statusUpdateData.order.productName}</strong></p>
+                                        <p className="text-xs text-latte-400">總需數量：{statusUpdateData.order.qty} 個</p>
+                                    </div>
+                                    
+                                    {/* 數量選擇器 */}
+                                    <div className="bg-cream-50 p-3 rounded-xl border border-cream-200 flex justify-between items-center">
+                                        <span className="text-sm font-bold text-latte-600">本次完成</span>
+                                        <div className="flex items-center gap-3">
+                                            <button onClick={()=>setStatusUpdateQty(Math.max(1, statusUpdateQty-1))} className="w-8 h-8 rounded-full bg-white shadow flex items-center justify-center text-latte-400 active:scale-90 transition disabled:opacity-50" disabled={statusUpdateQty<=1}><Minus size={14}/></button>
+                                            <span className="text-lg font-black w-8 text-center text-latte-800">{statusUpdateQty}</span>
+                                            <button onClick={()=>setStatusUpdateQty(Math.min(statusUpdateData.order.qty, statusUpdateQty+1))} className="w-8 h-8 rounded-full bg-latte-500 text-white shadow flex items-center justify-center active:scale-90 transition disabled:opacity-50" disabled={statusUpdateQty>=statusUpdateData.order.qty}><Plus size={14}/></button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <button onClick={confirmStatusUpdate} className="w-full bg-latte-600 text-white py-3.5 rounded-2xl font-bold shadow-lg shadow-latte-600/20 active:scale-95 transition">
+                                    確認完成 {statusUpdateQty} 個
+                                </button>
                             </div>
                         </div>
                     )}
@@ -850,12 +986,130 @@
                             <div className="grid grid-cols-2 gap-4 animate-in">
                                 <div className="bg-[#D98E73] text-white p-6 rounded-3xl shadow-lg relative overflow-hidden"><div className="absolute top-0 right-0 p-4 opacity-10"><Coins size={80}/></div><p className="text-xs font-bold opacity-90 tracking-wider">日幣總投需求</p><p className="text-3xl font-black mt-2">¥{stats.totalJPY.toLocaleString()}</p><p className="text-xs opacity-70 mt-1">共 {stats.totalCount} 顆</p></div>
                                 <div className="bg-[#BF9E85] text-white p-6 rounded-3xl shadow-lg relative overflow-hidden"><div className="absolute top-0 right-0 p-4 opacity-10"><DollarSign size={80}/></div><p className="text-xs font-bold opacity-90 tracking-wider">預估台幣營收</p><p className="text-3xl font-black mt-2">${stats.totalRevenue.toLocaleString()}</p></div>
-                                <div className="col-span-2 bg-white p-6 rounded-3xl border border-cream-200 shadow-sm flex justify-around text-center"><div><div className="text-3xl font-black text-latte-400">{stats.pendingPurchase}</div><div className="text-xs text-latte-300 font-bold mt-1">未投幣</div></div><div className="w-px bg-cream-200"></div><div><div className="text-3xl font-black text-latte-600">{stats.pendingPick}</div><div className="text-xs text-latte-300 font-bold mt-1">待撿貨</div></div></div>
+                                <div className="col-span-2 bg-white p-6 rounded-3xl border border-cream-200 shadow-sm flex justify-around text-center">
+                                    <button onClick={() => { setShowDashboardDetail('purchase'); setDashboardSearchQuery(''); }} className="flex-1 hover:bg-cream-50 rounded-xl transition p-2">
+                                        <div className="text-3xl font-black text-latte-400">{stats.pendingPurchase}</div>
+                                        <div className="text-xs text-latte-300 font-bold mt-1">未投幣 (點擊查看)</div>
+                                    </button>
+                                    <div className="w-px bg-cream-200"></div>
+                                    <button onClick={() => { setShowDashboardDetail('pick'); setDashboardSearchQuery(''); }} className="flex-1 hover:bg-cream-50 rounded-xl transition p-2">
+                                        <div className="text-3xl font-black text-latte-600">{stats.pendingPick}</div>
+                                        <div className="text-xs text-latte-300 font-bold mt-1">待撿貨 (點擊查看)</div>
+                                    </button>
+                                </div>
                             </div>
                         )}
                     </main>
 
-                    {/* --- Global Settings Modal --- */}
+                    {/* --- Modals --- */}
+                    
+                    {/* Dashboard Detail Modal (儀表板詳情 - 含顧客篩選) */}
+                    {showDashboardDetail && (
+                        <div className="fixed inset-0 bg-latte-900/40 backdrop-blur-[2px] z-[200] flex items-center justify-center p-4">
+                            <div className="bg-white rounded-[30px] w-full max-w-md h-[85vh] flex flex-col shadow-2xl animate-in">
+                                 <div className="flex justify-between items-center p-6 pb-2 border-b border-cream-100">
+                                    <h3 className="font-bold text-latte-800 text-lg flex items-center gap-2">
+                                        {showDashboardDetail === 'purchase' ? <Coins size={20}/> : <ShoppingBag size={20}/>}
+                                        {showDashboardDetail === 'purchase' ? '待投幣清單' : '待撿貨清單'}
+                                    </h3>
+                                    <button onClick={() => setShowDashboardDetail(null)} className="w-8 h-8 rounded-full bg-cream-200 text-latte-500 flex items-center justify-center"><X size={18}/></button>
+                                </div>
+                                
+                                {/* 顧客篩選列 (Chips) */}
+                                <div className="px-4 pt-2 overflow-x-auto whitespace-nowrap scrollbar-hide flex gap-2">
+                                    <button 
+                                        onClick={() => setDashboardSearchQuery('')}
+                                        className={`px-3 py-1 rounded-full text-xs font-bold border transition-colors ${!dashboardSearchQuery ? 'bg-latte-500 text-white border-latte-500' : 'bg-white text-latte-400 border-cream-200'}`}
+                                    >
+                                        全部 ({getDashboardDetailOrders().length})
+                                    </button>
+                                    {uniqueCustomersInDashboard.map(custName => (
+                                        <button 
+                                            key={custName}
+                                            onClick={() => setDashboardSearchQuery(custName === dashboardSearchQuery ? '' : custName)}
+                                            className={`px-3 py-1 rounded-full text-xs font-bold border transition-colors ${custName === dashboardSearchQuery ? 'bg-latte-500 text-white border-latte-500' : 'bg-white text-latte-600 border-cream-200'}`}
+                                        >
+                                            {custName}
+                                        </button>
+                                    ))}
+                                </div>
+
+                                {/* 搜尋框 */}
+                                <div className="p-4 pb-0">
+                                    <div className="relative">
+                                        <input 
+                                            type="text" 
+                                            placeholder="搜尋顧客或機台..." 
+                                            className="w-full bg-cream-50 border border-cream-200 p-2 pl-9 rounded-xl text-sm outline-none focus:border-latte-400 text-latte-800"
+                                            value={dashboardSearchQuery}
+                                            onChange={e => setDashboardSearchQuery(e.target.value)}
+                                        />
+                                        <Search size={14} className="absolute left-3 top-2.5 text-latte-400"/>
+                                    </div>
+                                </div>
+
+                                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                                    {getDashboardDetailOrders().map(o => (
+                                         <div key={o.id} className="bg-white p-4 rounded-2xl border border-cream-200 shadow-sm flex justify-between items-center">
+                                            <div>
+                                                <div className="font-bold text-latte-800">{o.productName} <span className="text-xs font-normal text-latte-400">({o.variant})</span></div>
+                                                <div className="text-xs text-latte-400 mt-1">{o.customer} · {o.qty} 個</div>
+                                            </div>
+                                            <button 
+                                                onClick={() => initiateStatusUpdate(o, showDashboardDetail === 'purchase' ? 'isPurchased' : 'isPicked')}
+                                                className={`px-4 py-2 rounded-xl font-bold text-xs shadow-sm active:scale-95 transition ${
+                                                    showDashboardDetail === 'purchase' 
+                                                    ? 'bg-amber-100 text-amber-700 border border-amber-200' 
+                                                    : 'bg-emerald-100 text-emerald-700 border border-emerald-200'
+                                                }`}
+                                            >
+                                                {showDashboardDetail === 'purchase' ? '確認投幣' : '確認撿貨'}
+                                            </button>
+                                         </div>
+                                    ))}
+                                    {getDashboardDetailOrders().length === 0 && <div className="text-center text-latte-300 py-10">
+                                        {dashboardSearchQuery ? '沒有符合篩選的訂單' : '太棒了！目前沒有待辦事項'}
+                                    </div>}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Status Update Modal (儀表板狀態更新 - 數量選擇) */}
+                    {statusUpdateData && (
+                        <div className="fixed inset-0 z-[260] flex items-center justify-center p-4 bg-latte-900/40 backdrop-blur-sm animate-in">
+                            <div className="bg-white rounded-[30px] w-full max-w-sm p-6 shadow-2xl space-y-4 flex flex-col">
+                                <div className="flex justify-between items-center border-b border-cream-200 pb-3">
+                                    <h3 className="font-bold text-latte-800 text-lg flex items-center gap-2">
+                                        {statusUpdateData.targetStatus === 'isPurchased' ? <Coins size={20}/> : <ShoppingBag size={20}/>}
+                                        {statusUpdateData.targetStatus === 'isPurchased' ? '確認投幣數量' : '確認撿貨數量'}
+                                    </h3>
+                                    <button onClick={()=>{setStatusUpdateData(null)}} className="w-8 h-8 rounded-full bg-cream-200 text-latte-500 flex items-center justify-center"><X size={18}/></button>
+                                </div>
+                                <div className="space-y-3">
+                                    <div>
+                                        <p className="text-sm text-latte-500 mb-1">商品：<strong>{statusUpdateData.order.productName}</strong></p>
+                                        <p className="text-xs text-latte-400">總需數量：{statusUpdateData.order.qty} 個</p>
+                                    </div>
+                                    
+                                    {/* 數量選擇器 */}
+                                    <div className="bg-cream-50 p-3 rounded-xl border border-cream-200 flex justify-between items-center">
+                                        <span className="text-sm font-bold text-latte-600">本次完成</span>
+                                        <div className="flex items-center gap-3">
+                                            <button onClick={()=>setStatusUpdateQty(Math.max(1, statusUpdateQty-1))} className="w-8 h-8 rounded-full bg-white shadow flex items-center justify-center text-latte-400 active:scale-90 transition disabled:opacity-50" disabled={statusUpdateQty<=1}><Minus size={14}/></button>
+                                            <span className="text-lg font-black w-8 text-center text-latte-800">{statusUpdateQty}</span>
+                                            <button onClick={()=>setStatusUpdateQty(Math.min(statusUpdateData.order.qty, statusUpdateQty+1))} className="w-8 h-8 rounded-full bg-latte-500 text-white shadow flex items-center justify-center active:scale-90 transition disabled:opacity-50" disabled={statusUpdateQty>=statusUpdateData.order.qty}><Plus size={14}/></button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <button onClick={confirmStatusUpdate} className="w-full bg-latte-600 text-white py-3.5 rounded-2xl font-bold shadow-lg shadow-latte-600/20 active:scale-95 transition">
+                                    確認完成 {statusUpdateQty} 個
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Global Settings Modal */}
                     {showGlobalSettings && (
                         <div className="fixed inset-0 bg-latte-900/40 backdrop-blur-[2px] z-[200] flex items-center justify-center p-4">
                             <div className="bg-white rounded-[30px] w-full max-w-md p-6 space-y-5 shadow-2xl animate-in max-h-[85vh] overflow-y-auto">
