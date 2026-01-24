@@ -64,19 +64,23 @@
             CheckCircle2, Truck, DollarSign, Search, X, ChevronRight, ClipboardList, 
             User, ListOrdered, Tag, CheckSquare, Trash2, Edit, Save, 
             Image as ImageIcon, Download, Loader2, Coins, Circle, ShoppingCart, Settings,
-            Cloud, Upload, FileJson, FileSpreadsheet, RefreshCcw, Minus, ArrowRightCircle, Megaphone, Undo2
+            Cloud, Upload, FileJson, FileSpreadsheet, RefreshCcw, Minus, ArrowRightCircle, Megaphone, Undo2, History, Package
         } from 'https://esm.sh/lucide-react@0.263.1?dev';
 
         const App = () => {
             // 1. 設定
             const DEFAULT_PRICE_TABLE = { 100: 50, 200: 80, 300: 120, 400: 140, 500: 170, 600: 190, 800: 260, 1000: 360, 1500: 450 };
             const ECO_FEE = 10; 
+            const RELEASE_ZONE_NAME = "釋出區";
 
             // 2. 狀態
             const loadLocal = (key, def) => { const s = localStorage.getItem(key); return s ? JSON.parse(s) : def; };
             const [orders, setOrders] = useState(() => loadLocal('cuibo_gasha_orders', []));
             const [priceTable, setPriceTable] = useState(() => loadLocal('cuibo_gasha_pricetable', DEFAULT_PRICE_TABLE));
             const [apiUrl, setApiUrl] = useState(() => localStorage.getItem('cuibo_gasha_api_url') || '');
+            
+            // 歷史紀錄
+            const [history, setHistory] = useState(() => loadLocal('cuibo_gasha_history', { machines: [], customers: [], variants: [] }));
 
             const [currentMachine, setCurrentMachine] = useState({ name: '', priceJPY: 500, priceTWD: 170, variant: '' });
             const [inputCustomer, setInputCustomer] = useState('');
@@ -94,7 +98,7 @@
             const [editingPrices, setEditingPrices] = useState([]);
             const [showGlobalSettings, setShowGlobalSettings] = useState(false);
             
-            const [showDashboardDetail, setShowDashboardDetail] = useState(null); // 'purchase', 'pick', 'releasing'
+            const [showDashboardDetail, setShowDashboardDetail] = useState(null); 
             const [dashboardSearchQuery, setDashboardSearchQuery] = useState(''); 
             const [statusUpdateData, setStatusUpdateData] = useState(null); 
             const [statusUpdateQty, setStatusUpdateQty] = useState(1);
@@ -104,8 +108,7 @@
             const [transferTarget, setTransferTarget] = useState(''); 
             const [transferQty, setTransferQty] = useState(1);
             
-            // Release (釋出) 相關狀態
-            const [releasingOrder, setReleasingOrder] = useState(null); // 準備釋出的訂單
+            const [releasingOrder, setReleasingOrder] = useState(null); 
             const [releaseQty, setReleaseQty] = useState(1);
 
             const [confirmConfig, setConfirmConfig] = useState(null);
@@ -114,10 +117,21 @@
             useEffect(() => { localStorage.setItem('cuibo_gasha_orders', JSON.stringify(orders)); }, [orders]);
             useEffect(() => { localStorage.setItem('cuibo_gasha_pricetable', JSON.stringify(priceTable)); }, [priceTable]);
             useEffect(() => { localStorage.setItem('cuibo_gasha_api_url', apiUrl); }, [apiUrl]);
+            useEffect(() => { localStorage.setItem('cuibo_gasha_history', JSON.stringify(history)); }, [history]);
 
             // 3. 邏輯計算
             const notify = (msg) => { setNotification(msg); setTimeout(() => setNotification(null), 3000); };
             const triggerConfirm = (title, message, onConfirm, type = 'info') => { setConfirmConfig({ title, message, onConfirm, type }); };
+
+            const updateHistory = (type, value) => {
+                if (!value) return;
+                const val = value.trim();
+                setHistory(prev => {
+                    const list = prev[type] || [];
+                    const newList = [val, ...list.filter(item => item !== val)].slice(0, 100);
+                    return { ...prev, [type]: newList };
+                });
+            };
 
             const customerList = useMemo(() => {
                 const map = {};
@@ -125,7 +139,6 @@
                     const cleanName = o.customer ? o.customer.trim() : 'Unknown';
                     if (!map[cleanName]) map[cleanName] = { name: cleanName, totalSpent: 0, items: [], orderCount: 0 };
                     map[cleanName].orderCount += 1;
-                    // 注意：釋出中的商品，仍然算在原顧客頭上 (User 要求)
                     map[cleanName].totalSpent += o.customerTotalTWD;
                     map[cleanName].items.push({ ...o, itemTotal: o.customerTotalTWD, finalPrice: o.unitPriceTWD });
                 });
@@ -145,7 +158,6 @@
                 const totalCount = orders.reduce((acc, o) => acc + o.qty, 0);
                 const pendingPurchase = orders.filter(o => !o.isPurchased).reduce((acc, o) => acc + o.qty, 0);
                 const pendingPick = orders.filter(o => o.isPurchased && !o.isPicked).reduce((acc, o) => acc + o.qty, 0);
-                // 新增：釋出中數量
                 const releasingCount = orders.filter(o => o.isReleasing).reduce((acc, o) => acc + o.qty, 0);
                 return { totalRevenue, totalJPY, totalCount, pendingPurchase, pendingPick, releasingCount };
             }, [orders]);
@@ -156,7 +168,7 @@
                 let list = [];
                 if (showDashboardDetail === 'purchase') list = orders.filter(o => !o.isPurchased);
                 else if (showDashboardDetail === 'pick') list = orders.filter(o => o.isPurchased && !o.isPicked);
-                else if (showDashboardDetail === 'releasing') list = orders.filter(o => o.isReleasing); // 釋出池
+                else if (showDashboardDetail === 'releasing') list = orders.filter(o => o.isReleasing);
                 
                 if (dashboardSearchQuery) list = list.filter(o => o.customer.includes(dashboardSearchQuery) || o.productName.includes(dashboardSearchQuery));
                 return list.sort((a, b) => a.productName.localeCompare(b.productName));
@@ -175,13 +187,18 @@
                 if (!inputCustomer) return notify("請輸入顧客名稱");
                 const unitPriceTWD = currentMachine.priceTWD;
                 const ecoTotal = isEco ? (ECO_FEE * inputQty) : 0;
+                
+                updateHistory('machines', currentMachine.name);
+                updateHistory('customers', inputCustomer);
+                if (currentMachine.variant) updateHistory('variants', currentMachine.variant);
+
                 const newOrder = {
                     id: Date.now(), date: new Date().toISOString().split('T')[0],
                     customer: inputCustomer.trim(), productName: currentMachine.name, variant: currentMachine.variant || '隨機', qty: inputQty,
                     unitPriceJPY: currentMachine.priceJPY, unitPriceTWD: unitPriceTWD,
                     ecoFeePerUnit: isEco ? ECO_FEE : 0, ecoFeeTotal: ecoTotal,
                     gashaTotalJPY: currentMachine.priceJPY * inputQty, gashaTotalTWD: unitPriceTWD * inputQty, customerTotalTWD: (unitPriceTWD * inputQty) + ecoTotal,
-                    isPurchased: false, isPicked: false, isReleasing: false // 預設未釋出
+                    isPurchased: false, isPicked: false, isReleasing: false
                 };
                 setOrders(p => [newOrder, ...p]);
                 setInputCustomer(''); setInputQty(1); notify(`已加入: ${newOrder.customer}`);
@@ -190,162 +207,102 @@
             const toggleStatus = (id, field) => setOrders(p => p.map(o => o.id === id ? { ...o, [field]: !o[field] } : o));
             const deleteOrder = (id) => triggerConfirm('刪除', '確定刪除此訂單？', () => { setOrders(p => p.filter(o => o.id !== id)); notify("已刪除"); }, 'danger');
             
-            // --- 標記為釋出 (Mark as Releasing) ---
             const handleMarkAsReleasing = () => {
                 if (!releasingOrder) return;
                 const qtyToRelease = parseInt(releaseQty);
                 if (qtyToRelease <= 0 || qtyToRelease > releasingOrder.qty) return notify("數量錯誤");
 
                 setOrders(prev => {
-                    // Case 1: Release All
-                    if (qtyToRelease === releasingOrder.qty) {
-                        return prev.map(o => o.id === releasingOrder.id ? { ...o, isReleasing: true } : o);
-                    }
-                    // Case 2: Split and Release Part
+                    if (qtyToRelease === releasingOrder.qty) return prev.map(o => o.id === releasingOrder.id ? { ...o, isReleasing: true } : o);
                     const updatedOrders = [];
                     const ecoNew = releasingOrder.ecoFeePerUnit * qtyToRelease;
-                    // New "Releasing" order
                     updatedOrders.push({
-                        ...releasingOrder,
-                        id: Date.now(),
-                        qty: qtyToRelease,
-                        ecoFeeTotal: ecoNew,
-                        gashaTotalJPY: releasingOrder.unitPriceJPY * qtyToRelease,
-                        gashaTotalTWD: releasingOrder.unitPriceTWD * qtyToRelease,
-                        customerTotalTWD: (releasingOrder.unitPriceTWD * qtyToRelease) + ecoNew,
-                        isReleasing: true
+                        ...releasingOrder, id: Date.now(), qty: qtyToRelease, ecoFeeTotal: ecoNew,
+                        gashaTotalJPY: releasingOrder.unitPriceJPY * qtyToRelease, gashaTotalTWD: releasingOrder.unitPriceTWD * qtyToRelease,
+                        customerTotalTWD: (releasingOrder.unitPriceTWD * qtyToRelease) + ecoNew, isReleasing: true
                     });
-                    // Original order (Keep remaining)
                     prev.forEach(o => {
                         if (o.id === releasingOrder.id) {
                             const left = o.qty - qtyToRelease;
-                            updatedOrders.push({
-                                ...o,
-                                qty: left,
-                                ecoFeeTotal: o.ecoFeePerUnit * left,
-                                gashaTotalJPY: o.unitPriceJPY * left,
-                                gashaTotalTWD: o.unitPriceTWD * left,
-                                customerTotalTWD: (o.unitPriceTWD * left) + (o.ecoFeePerUnit * left)
-                            });
+                            updatedOrders.push({ ...o, qty: left, ecoFeeTotal: o.ecoFeePerUnit * left, gashaTotalJPY: o.unitPriceJPY * left, gashaTotalTWD: o.unitPriceTWD * left, customerTotalTWD: (o.unitPriceTWD * left) + (o.ecoFeePerUnit * left) });
                         } else updatedOrders.push(o);
                     });
                     return updatedOrders;
                 });
-                
-                setReleasingOrder(null);
-                setReleaseQty(1);
-                notify(`已標記 ${qtyToRelease} 個為釋出中`);
+                setReleasingOrder(null); setReleaseQty(1); notify(`已標記 ${qtyToRelease} 個為釋出中`);
             };
             
-            // 取消釋出 (Unmark)
             const handleCancelRelease = (id) => {
-                setOrders(prev => prev.map(o => o.id === id ? { ...o, isReleasing: false } : o));
-                notify("已取消釋出狀態");
+                setOrders(prev => {
+                    const target = prev.find(o => o.id === id);
+                    if (!target) return prev;
+                    const siblingIndex = prev.findIndex(o => o.id !== id && o.customer === target.customer && o.productName === target.productName && o.variant === target.variant && o.unitPriceTWD === target.unitPriceTWD && o.ecoFeePerUnit === target.ecoFeePerUnit && o.isPurchased === target.isPurchased && o.isPicked === target.isPicked && o.isReleasing === false);
+                    if (siblingIndex !== -1) {
+                        const sibling = prev[siblingIndex];
+                        const newQty = sibling.qty + target.qty;
+                        const ecoTotal = sibling.ecoFeePerUnit * newQty;
+                        const mergedOrder = { ...sibling, qty: newQty, ecoFeeTotal: ecoTotal, gashaTotalJPY: sibling.unitPriceJPY * newQty, gashaTotalTWD: sibling.unitPriceTWD * newQty, customerTotalTWD: (sibling.unitPriceTWD * newQty) + ecoTotal };
+                        const newOrders = [...prev]; newOrders[siblingIndex] = mergedOrder; return newOrders.filter(o => o.id !== id);
+                    } else {
+                        return prev.map(o => o.id === id ? { ...o, isReleasing: false } : o);
+                    }
+                });
+                notify("已取消釋出");
             };
 
-            // --- 轉讓 (Transfer / Claim) ---
-            // 當從釋出池轉讓時，同時將 isReleasing 設為 false
             const handleTransferOrder = () => {
                 if (!transferringOrder || !transferTarget) return;
                 const target = transferTarget.trim();
                 const qty = parseInt(transferQty);
                 if (qty <= 0 || qty > transferringOrder.qty) return notify("數量錯誤");
                 
+                updateHistory('customers', target);
+
                 triggerConfirm('確認轉讓', `將 ${qty} 個轉讓給「${target}」？\n所有權將立即轉移，並取消釋出狀態。`, () => {
                     setOrders(prev => {
-                        if (qty === transferringOrder.qty) {
-                            // Transfer All & Clear Release status
-                            return prev.map(o => o.id === transferringOrder.id ? { ...o, customer: target, isReleasing: false } : o);
-                        }
-                        
-                        // Split Logic
+                        if (qty === transferringOrder.qty) return prev.map(o => o.id === transferringOrder.id ? { ...o, customer: target, isReleasing: false } : o);
                         const updated = [];
                         const ecoNew = transferringOrder.ecoFeePerUnit * qty;
-                        updated.push({ 
-                            ...transferringOrder, 
-                            id: Date.now(), 
-                            customer: target, 
-                            qty: qty, 
-                            ecoFeeTotal: ecoNew, 
-                            gashaTotalJPY: transferringOrder.unitPriceJPY*qty, 
-                            gashaTotalTWD: transferringOrder.unitPriceTWD*qty, 
-                            customerTotalTWD: (transferringOrder.unitPriceTWD*qty)+ecoNew,
-                            isReleasing: false // New owner item is NOT releasing
-                        });
+                        updated.push({ ...transferringOrder, id: Date.now(), customer: target, qty: qty, ecoFeeTotal: ecoNew, gashaTotalJPY: transferringOrder.unitPriceJPY*qty, gashaTotalTWD: transferringOrder.unitPriceTWD*qty, customerTotalTWD: (transferringOrder.unitPriceTWD*qty)+ecoNew, isReleasing: false });
                         prev.forEach(o => {
                             if (o.id === transferringOrder.id) {
                                 const left = o.qty - qty;
-                                updated.push({ 
-                                    ...o, 
-                                    qty: left, 
-                                    ecoFeeTotal: o.ecoFeePerUnit*left, 
-                                    gashaTotalJPY: o.unitPriceJPY*left, 
-                                    gashaTotalTWD: o.unitPriceTWD*left, 
-                                    customerTotalTWD: (o.unitPriceTWD*left)+(o.ecoFeePerUnit*left)
-                                    // Original keeps its releasing status if it was releasing
-                                });
+                                updated.push({ ...o, qty: left, ecoFeeTotal: o.ecoFeePerUnit*left, gashaTotalJPY: o.unitPriceJPY*left, gashaTotalTWD: o.unitPriceTWD*left, customerTotalTWD: (o.unitPriceTWD*left)+(o.ecoFeePerUnit*left) });
                             } else updated.push(o);
                         });
                         return updated;
                     });
                     setTransferringOrder(null); setTransferTarget(''); notify(`已轉讓給 ${target}`);
-                    // 如果在 dashboard 釋出池，轉讓後該項目會自動消失 (因為 isReleasing 變 false)
                 });
             };
 
-            // ... (Backup, Cloud, Price Editor code same as v5) ...
-            const handleClearAllData = () => { triggerConfirm('⚠️ 危險操作', '清除所有資料？', () => { setOrders([]); notify("已清空"); setShowGlobalSettings(false); }, 'danger'); };
-            const handleExportBackup = () => { saveAs(new Blob([JSON.stringify({ orders, priceTable, timestamp: new Date().toISOString() }, null, 2)], { type: "application/json" }), `Backup_${new Date().toISOString().slice(0,10)}.json`); notify("下載成功"); };
-            const handleImportBackup = (e) => { const f = e.target.files[0]; if(!f)return; const r = new FileReader(); r.onload=(ev)=>{ try{ const d=JSON.parse(ev.target.result); if(d.orders) triggerConfirm('還原', `時間: ${d.timestamp}`, ()=>{ setOrders(d.orders); if(d.priceTable) setPriceTable(d.priceTable); notify("成功"); setShowGlobalSettings(false); }, 'danger'); }catch(x){notify("錯誤");} e.target.value=''; }; r.readAsText(f); };
-            const handleExportCSV = () => { const bom="\uFEFF"; const h="日期,顧客,機台,款式,數量,單價(台),總額,釋出中\n"; const r=orders.map(o=>`${o.date},${o.customer},${o.productName},${o.variant},${o.qty},${o.unitPriceTWD},${o.customerTotalTWD},${o.isReleasing?'是':'否'}`).join("\n"); saveAs(new Blob([bom+h+r],{type:"text/csv"}),"Export.csv"); notify("CSV下載"); };
-            const handleCloudUpload = async () => { if(!apiUrl)return notify("無API"); setIsSyncing(true); try{ await fetch(apiUrl,{method:'POST',body:JSON.stringify({orders,priceTable,timestamp:new Date().toISOString()})}); notify("備份成功"); }catch(e){notify("失敗");}finally{setIsSyncing(false);} };
-            const handleCloudDownload = async () => { if(!apiUrl)return notify("無API"); setIsSyncing(true); try{ const r=await fetch(apiUrl); const d=await r.json(); if(d.orders) triggerConfirm('同步',`時間:${d.timestamp}`,()=>{setOrders(d.orders);if(d.priceTable)setPriceTable(d.priceTable);notify("成功");setShowGlobalSettings(false);},'danger'); }catch(e){notify("失敗");}finally{setIsSyncing(false);} };
-            
-            const handleSaveEditedOrder = () => {
-                if (!editingOrder) return;
-                const eco = editingOrder.ecoFeePerUnit * editingOrder.qty;
-                setOrders(p => p.map(o => o.id === editingOrder.id ? { ...editingOrder, ecoFeeTotal: eco, customerTotalTWD: (editingOrder.unitPriceTWD*editingOrder.qty)+eco, gashaTotalJPY: editingOrder.unitPriceJPY*editingOrder.qty, gashaTotalTWD: editingOrder.unitPriceTWD*editingOrder.qty } : o));
-                setEditingOrder(null); notify("已更新");
-            };
-            
-            // Dashboard Status Update
-            const initiateStatusUpdate = (order, targetStatus) => {
-                if (order.qty === 1) { setOrders(p => p.map(o => o.id === order.id ? { ...o, [targetStatus]: true } : o)); notify("已更新"); return; }
-                setStatusUpdateData({ order, targetStatus, maxQty: order.qty }); setStatusUpdateQty(order.qty);
-            };
-            const confirmStatusUpdate = () => {
-                if (!statusUpdateData) return;
-                const { order, targetStatus } = statusUpdateData;
-                const qtyToUpdate = parseInt(statusUpdateQty);
-                if (qtyToUpdate <= 0 || qtyToUpdate > order.qty) return;
-                setOrders(prev => {
-                    if (qtyToUpdate === order.qty) return prev.map(o => o.id === order.id ? { ...o, [targetStatus]: true } : o);
-                    const updatedOrders = [];
-                    const ecoNew = order.ecoFeePerUnit * qtyToUpdate;
-                    updatedOrders.push({ ...order, id: Date.now(), qty: qtyToUpdate, ecoFeeTotal: ecoNew, gashaTotalJPY: order.unitPriceJPY*qtyToUpdate, gashaTotalTWD: order.unitPriceTWD*qtyToUpdate, customerTotalTWD: (order.unitPriceTWD*qtyToUpdate)+ecoNew, [targetStatus]: true });
-                    prev.forEach(o => {
-                        if (o.id === order.id) {
-                            const leftQty = o.qty - qtyToUpdate;
-                            updatedOrders.push({ ...o, qty: leftQty, ecoFeeTotal: o.ecoFeePerUnit*leftQty, gashaTotalJPY: o.unitPriceJPY*leftQty, gashaTotalTWD: o.unitPriceTWD*leftQty, customerTotalTWD: (o.unitPriceTWD*leftQty)+(o.ecoFeePerUnit*leftQty) });
-                        } else updatedOrders.push(o);
-                    });
-                    return updatedOrders;
-                });
-                setStatusUpdateData(null); notify(`已更新 ${qtyToUpdate} 個`);
+            const handleClearAllData = () => {
+                triggerConfirm('⚠️ 危險操作', '此操作將「永久清除所有訂單資料」！\n(價格設定與輸入歷史會保留)\n\n您確定要繼續嗎？', () => {
+                    setOrders([]); notify("系統資料已清空"); setShowGlobalSettings(false);
+                }, 'danger');
             };
 
+            const handleClearHistory = () => {
+                triggerConfirm('清除歷史', '確定清除所有自動完成的歷史紀錄？', () => {
+                    setHistory({ machines: [], customers: [], variants: [] });
+                    notify("歷史紀錄已清空");
+                }, 'danger');
+            };
+
+            const handleExportBackup = () => { saveAs(new Blob([JSON.stringify({ orders, priceTable, history, timestamp: new Date().toISOString() }, null, 2)], { type: "application/json" }), `CuiboGasha_Backup_${new Date().toISOString().slice(0,10)}.json`); notify("下載成功"); };
+            const handleImportBackup = (e) => { const f = e.target.files[0]; if(!f)return; const r = new FileReader(); r.onload=(ev)=>{ try{ const d=JSON.parse(ev.target.result); if(d.orders) triggerConfirm('還原', `時間: ${d.timestamp}`, ()=>{ setOrders(d.orders); if(d.priceTable) setPriceTable(d.priceTable); if(d.history) setHistory(d.history); notify("成功"); setShowGlobalSettings(false); }, 'danger'); }catch(x){notify("錯誤");} e.target.value=''; }; r.readAsText(f); };
+            const handleExportCSV = () => { const bom="\uFEFF"; const h="日期,顧客,機台,款式,數量,單價(台),總額,核對,入袋,釋出中\n"; const r=orders.map(o=>`${o.date},${o.customer},${o.productName},${o.variant},${o.qty},${o.unitPriceTWD},${o.customerTotalTWD},${o.isPurchased?'V':'X'},${o.isPicked?'V':'X'},${o.isReleasing?'Y':''}`).join("\n"); saveAs(new Blob([bom+h+r],{type:"text/csv"}),"Export.csv"); notify("CSV下載"); };
+            const handleCloudUpload = async () => { if(!apiUrl)return notify("無API"); setIsSyncing(true); try{ await fetch(apiUrl,{method:'POST',body:JSON.stringify({orders,priceTable,history,timestamp:new Date().toISOString()})}); notify("備份成功"); }catch(e){notify("失敗");}finally{setIsSyncing(false);} };
+            const handleCloudDownload = async () => { if(!apiUrl)return notify("無API"); setIsSyncing(true); try{ const r=await fetch(apiUrl); const d=await r.json(); if(d.orders) triggerConfirm('同步',`時間:${d.timestamp}`,()=>{setOrders(d.orders);if(d.priceTable)setPriceTable(d.priceTable);if(d.history)setHistory(d.history);notify("成功");setShowGlobalSettings(false);},'danger'); }catch(e){notify("失敗");}finally{setIsSyncing(false);} };
+            const handleSaveEditedOrder = () => { if(!editingOrder) return; const eco=editingOrder.ecoFeePerUnit*editingOrder.qty; setOrders(p=>p.map(o=>o.id===editingOrder.id?{...editingOrder,ecoFeeTotal:eco,customerTotalTWD:(editingOrder.unitPriceTWD*editingOrder.qty)+eco,gashaTotalJPY:editingOrder.unitPriceJPY*editingOrder.qty,gashaTotalTWD:editingOrder.unitPriceTWD*editingOrder.qty}:o)); setEditingOrder(null); notify("已更新"); };
+            const initiateStatusUpdate = (order, targetStatus) => { if (order.qty === 1) { setOrders(p => p.map(o => o.id === order.id ? { ...o, [targetStatus]: true } : o)); notify("已更新"); return; } setStatusUpdateData({ order, targetStatus, maxQty: order.qty }); setStatusUpdateQty(order.qty); };
+            const confirmStatusUpdate = () => { if (!statusUpdateData) return; const { order, targetStatus } = statusUpdateData; const qtyToUpdate = parseInt(statusUpdateQty); if (qtyToUpdate <= 0 || qtyToUpdate > order.qty) return; setOrders(prev => { if (qtyToUpdate === order.qty) return prev.map(o => o.id === order.id ? { ...o, [targetStatus]: true } : o); const updatedOrders = []; const ecoNew = order.ecoFeePerUnit * qtyToUpdate; updatedOrders.push({ ...order, id: Date.now(), qty: qtyToUpdate, ecoFeeTotal: ecoNew, gashaTotalJPY: order.unitPriceJPY*qtyToUpdate, gashaTotalTWD: order.unitPriceTWD*qtyToUpdate, customerTotalTWD: (order.unitPriceTWD*qtyToUpdate)+ecoNew, [targetStatus]: true }); prev.forEach(o => { if (o.id === order.id) { const leftQty = o.qty - qtyToUpdate; updatedOrders.push({ ...o, qty: leftQty, ecoFeeTotal: o.ecoFeePerUnit*leftQty, gashaTotalJPY: o.unitPriceJPY*leftQty, gashaTotalTWD: o.unitPriceTWD*leftQty, customerTotalTWD: (o.unitPriceTWD*leftQty)+(o.ecoFeePerUnit*leftQty) }); } else updatedOrders.push(o); }); return updatedOrders; }); setStatusUpdateData(null); notify(`已更新 ${qtyToUpdate} 個`); };
             const openPriceEditor = () => { setEditingPrices(Object.entries(priceTable).map(([j,t])=>({id:Date.now()+Math.random(),j:parseInt(j),t:parseInt(t)})).sort((a,b)=>a.j-b.j)); setShowPriceEditor(true); };
             const addPriceRow = () => setEditingPrices(prev => [...prev, { id: Date.now(), jpy: '', twd: '' }]);
             const removePriceRow = (id) => setEditingPrices(prev => prev.filter(p => p.id !== id));
             const updatePriceRow = (id, field, val) => setEditingPrices(prev => prev.map(p => p.id === id ? { ...p, [field]: parseInt(val) || '' } : p));
             const savePriceEditor = () => { const t = {}; editingPrices.forEach(p => { if (p.jpy && p.twd) t[p.jpy] = p.twd; }); setPriceTable(t); setShowPriceEditor(false); notify("價格已更新"); };
-            const handleCopyOrderText = (c) => {
-                if(!c) return;
-                let t = `親愛的 ${c.name} 您好，\n明細如下：\n`;
-                c.items.forEach(i => t+=`${i.productName} ${i.variant} x${i.qty} $${i.customerTotalTWD}${i.isReleasing?' (釋出中)':''}\n`);
-                t+=`------------\n總額：$${c.totalSpent.toLocaleString()}\n請確認無誤後匯款，謝謝！`;
-                const ta = document.createElement("textarea"); ta.value = t; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); notify("已複製");
-            };
+            const handleCopyOrderText = (c) => { if(!c) return; let t = `親愛的 ${c.name} 您好，\n明細如下：\n`; c.items.forEach(i => t+=`${i.productName} ${i.variant} x${i.qty} $${i.customerTotalTWD}${i.isReleasing?' (釋出中)':''}\n`); t+=`------------\n總額：$${c.totalSpent.toLocaleString()}\n請確認無誤後匯款，謝謝！`; const ta = document.createElement("textarea"); ta.value = t; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); notify("已複製"); };
             const handleExportToImage = async (c) => { if(!c) return; setExportTargetCustomer(c); await new Promise(r=>setTimeout(r,100)); const el = document.getElementById('hidden-receipt-container'); if(el) { try { const cvs = await html2canvas(el,{useCORS:true,scale:2,backgroundColor:'#FCF4E9'}); saveAs(cvs.toDataURL(), `${c.name}.png`); notify("圖片下載"); } catch(e){ notify("失敗"); } finally { setExportTargetCustomer(null); } } };
 
             return (
@@ -370,48 +327,121 @@
                     <main className="max-w-2xl mx-auto p-4 space-y-5">
                         {activeTab === 'input' && (
                             <div className="space-y-4 animate-in">
+                                
+                                {/* 1. 顧客名稱 */}
                                 <div className="bg-white rounded-3xl p-5 shadow-lg border-2 border-latte-200">
-                                    <div className="flex items-center gap-3"><div className="w-10 h-10 bg-cream-100 rounded-full flex items-center justify-center text-latte-400"><User size={20}/></div><input type="text" placeholder="誰要買? (輸入顧客名)" className="flex-1 bg-cream-50 rounded-xl py-3 px-4 font-bold text-lg outline-none focus:ring-2 ring-latte-300 text-latte-800" value={inputCustomer} onChange={e => setInputCustomer(e.target.value)}/></div>
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 bg-cream-100 rounded-full flex items-center justify-center text-latte-400"><User size={20}/></div>
+                                        <input 
+                                            type="text" 
+                                            list="hist-customers"
+                                            placeholder="誰要買? (輸入顧客名)" 
+                                            className="flex-1 bg-cream-50 rounded-xl py-3 px-4 font-bold text-lg outline-none focus:ring-2 ring-latte-300 text-latte-800"
+                                            value={inputCustomer}
+                                            onChange={e => setInputCustomer(e.target.value)}
+                                        />
+                                        <datalist id="hist-customers">
+                                            {history.customers.map(c => <option key={c} value={c}/>)}
+                                        </datalist>
+                                    </div>
                                 </div>
+
+                                {/* 2. 機台設定 */}
                                 <div className="bg-white rounded-3xl p-5 shadow-soft border border-cream-200">
-                                    <div className="flex justify-between items-center mb-2"><div className="text-xs font-bold text-latte-400 tracking-wider flex items-center gap-1"><Tag size={12}/> 機台設定 (鎖定中)</div><button onClick={openPriceEditor} className="text-[10px] text-latte-500 bg-cream-100 px-2 py-1 rounded border border-cream-200"><Edit size={10}/> 編輯價格</button></div>
-                                    <input type="text" placeholder="輸入機台名稱 (例: 吉伊卡哇)" className="w-full text-lg font-bold border-b-2 border-cream-200 focus:border-latte-400 outline-none pb-2 mb-4 placeholder-latte-300 bg-transparent text-latte-800" value={currentMachine.name} onChange={e => setCurrentMachine({...currentMachine, name: e.target.value})}/>
-                                    <div className="grid grid-cols-4 gap-2 mb-4">{Object.keys(priceTable).map(Number).sort((a,b)=>a-b).map(p => (<button key={p} onClick={() => handlePriceSelect(p)} className={`py-2 rounded-xl text-sm font-bold transition-all ${currentMachine.priceJPY === p ? 'price-btn-active' : 'price-btn'}`}>¥{p}</button>))}</div>
-                                    <div className="flex justify-between items-center bg-cream-50 p-3 rounded-2xl border border-cream-200"><div className="text-xs text-latte-400 font-bold">自動換算</div><div className="font-black text-latte-600 flex items-baseline gap-1"><span className="text-sm font-normal text-latte-400">¥{currentMachine.priceJPY} =</span><span className="text-xl">NT${currentMachine.priceTWD}</span></div></div>
-                                    <div className="mt-3"><input type="text" placeholder="款式 (預設隨機)" className="w-full text-sm bg-cream-50 rounded-xl p-3 outline-none text-latte-800" value={currentMachine.variant} onChange={e => setCurrentMachine({...currentMachine, variant: e.target.value})}/></div>
+                                    <div className="flex justify-between items-center mb-2">
+                                        <div className="text-xs font-bold text-latte-400 tracking-wider flex items-center gap-1"><Tag size={12}/> 機台設定 (鎖定中)</div>
+                                        <button onClick={openPriceEditor} className="text-[10px] text-latte-500 bg-cream-100 px-2 py-1 rounded border border-cream-200 flex items-center gap-1 hover:bg-cream-200 active:scale-95 transition"><Edit size={10}/> 編輯價格</button>
+                                    </div>
+                                    <input 
+                                        type="text"
+                                        list="hist-machines"
+                                        placeholder="輸入機台名稱 (例: 吉伊卡哇)" 
+                                        className="w-full text-lg font-bold border-b-2 border-cream-200 focus:border-latte-400 outline-none pb-2 mb-4 placeholder-latte-300 bg-transparent text-latte-800"
+                                        value={currentMachine.name}
+                                        onChange={e => setCurrentMachine({...currentMachine, name: e.target.value})}
+                                    />
+                                    <datalist id="hist-machines">
+                                        {history.machines.map(m => <option key={m} value={m}/>)}
+                                    </datalist>
+
+                                    <div className="grid grid-cols-4 gap-2 mb-4">
+                                        {Object.keys(priceTable).map(Number).sort((a,b)=>a-b).map(price => (
+                                            <button 
+                                                key={price}
+                                                onClick={() => handlePriceSelect(price)}
+                                                className={`py-2 rounded-xl text-sm font-bold transition-all ${currentMachine.priceJPY === price ? 'price-btn-active' : 'price-btn'}`}
+                                            >
+                                                ¥{price}
+                                            </button>
+                                        ))}
+                                    </div>
+                                    <div className="flex justify-between items-center bg-cream-50 p-3 rounded-2xl border border-cream-200">
+                                        <div className="text-xs text-latte-400 font-bold">自動換算</div>
+                                        <div className="font-black text-latte-600 flex items-baseline gap-1">
+                                            <span className="text-sm font-normal text-latte-400">¥{currentMachine.priceJPY} =</span>
+                                            <span className="text-xl">NT${currentMachine.priceTWD}</span>
+                                        </div>
+                                    </div>
+                                    <div className="mt-3">
+                                        <input 
+                                            type="text" 
+                                            list="hist-variants"
+                                            placeholder="款式 (預設隨機)" 
+                                            className="w-full text-sm bg-cream-50 rounded-xl p-3 outline-none text-latte-800"
+                                            value={currentMachine.variant}
+                                            onChange={e => setCurrentMachine({...currentMachine, variant: e.target.value})}
+                                        />
+                                        <datalist id="hist-variants">
+                                            {history.variants.map(v => <option key={v} value={v}/>)}
+                                        </datalist>
+                                    </div>
                                 </div>
+
+                                {/* 3. 加入清單 & 數量 */}
                                 <div className="bg-white rounded-3xl p-5 shadow-lg border-2 border-latte-200">
                                     <div className="flex items-center justify-between mb-6">
                                         <div className="flex items-center gap-3 bg-cream-50 rounded-full p-1 border border-cream-200">
-                                            <button onClick={() => setInputQty(Math.max(1, inputQty-1))} className="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-latte-400 active:scale-90"><Minus size={18}/></button><span className="text-xl font-black w-8 text-center text-latte-800">{inputQty}</span><button onClick={() => setInputQty(inputQty+1)} className="w-10 h-10 rounded-full bg-latte-500 text-white shadow-md flex items-center justify-center active:scale-90"><Plus size={18}/></button>
+                                            <button onClick={() => setInputQty(Math.max(1, inputQty-1))} className="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-latte-400 active:scale-90 transition"><Minus size={18}/></button>
+                                            <span className="text-xl font-black w-8 text-center text-latte-800">{inputQty}</span>
+                                            <button onClick={() => setInputQty(inputQty+1)} className="w-10 h-10 rounded-full bg-latte-500 text-white shadow-md flex items-center justify-center active:scale-90 transition"><Plus size={18}/></button>
                                         </div>
-                                        <button onClick={() => setIsEco(!isEco)} className={`flex flex-col items-center justify-center px-4 py-2 rounded-2xl border-2 transition-all ${isEco ? 'border-emerald-400 bg-emerald-50 text-emerald-700' : 'border-cream-200 text-latte-300 bg-white'}`}><span className="text-[10px] font-bold">拆殼/環保</span><span className="font-bold text-sm">+{isEco ? `$${ECO_FEE*inputQty}` : '$0'}</span></button>
+                                        <button 
+                                            onClick={() => setIsEco(!isEco)}
+                                            className={`flex flex-col items-center justify-center px-4 py-2 rounded-2xl border-2 transition-all ${isEco ? 'border-emerald-400 bg-emerald-50 text-emerald-700' : 'border-cream-200 text-latte-300 bg-white'}`}
+                                        >
+                                            <span className="text-[10px] font-bold">拆殼/環保</span>
+                                            <span className="font-bold text-sm">+{isEco ? `$${ECO_FEE*inputQty}` : '$0'}</span>
+                                        </button>
                                     </div>
-                                    <button onClick={addOrder} className="w-full bg-latte-800 text-cream-50 py-4 rounded-2xl font-bold text-lg shadow-lg shadow-latte-800/20 active:scale-98 transition flex items-center justify-center gap-2 hover:brightness-110"><span>加入清單</span><span className="bg-white/20 px-2 py-0.5 rounded text-sm">${(currentMachine.priceTWD * inputQty) + (isEco ? ECO_FEE * inputQty : 0)}</span></button>
+                                    <button onClick={addOrder} className="w-full bg-latte-800 text-cream-50 py-4 rounded-2xl font-bold text-lg shadow-lg shadow-latte-800/20 active:scale-98 transition flex items-center justify-center gap-2 hover:brightness-110">
+                                        <span>加入清單</span>
+                                        <span className="bg-white/20 px-2 py-0.5 rounded text-sm">
+                                            ${(currentMachine.priceTWD * inputQty) + (isEco ? ECO_FEE * inputQty : 0)}
+                                        </span>
+                                    </button>
                                 </div>
+                                {orders.length > 0 && <div className="text-center text-xs text-latte-400 opacity-70">剛加入: {orders[0].customer} - {orders[0].productName} (${orders[0].customerTotalTWD})</div>}
                             </div>
                         )}
-                        
+
+                        {/* 2. List Tab */}
                         {activeTab === 'list' && (
                             <div className="space-y-3 animate-in">
                                 <div className="relative mb-4"><input type="text" placeholder="搜尋..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full bg-white rounded-xl p-3 pl-10 border border-cream-200 outline-none focus:border-latte-400 text-latte-800" /><Search size={16} className="absolute left-3 top-3.5 text-latte-300" /></div>
                                 {filteredOrders.map(o => (
-                                    <div key={o.id} className={`bg-white p-4 rounded-3xl shadow-soft border border-cream-200 transition-all ${o.isPicked ? 'opacity-60 bg-cream-50' : ''}`}>
+                                    <div key={o.id} onClick={() => setEditingOrder(o)} className={`bg-white p-4 rounded-3xl shadow-soft border border-cream-200 transition-all cursor-pointer hover:border-latte-300 active:scale-[0.99] ${o.isPicked ? 'opacity-60 bg-cream-50' : ''}`}>
                                         <div className="flex justify-between items-start mb-3">
-                                            <div><div className="font-bold text-latte-800 text-lg">{o.customer}</div><div className="text-xs text-latte-500 font-bold">{o.productName} <span className="text-latte-300 font-normal">({o.variant})</span></div>
-                                            <div className="mt-1 flex gap-2">
-                                                <span className="text-xs bg-cream-100 inline-block px-2 py-0.5 rounded text-latte-600 font-bold border border-cream-200">¥{o.unitPriceJPY} x {o.qty}{o.ecoFeeTotal > 0 && <span className="text-emerald-600 ml-1">+環保</span>}</span>
-                                                {o.isReleasing && <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded font-bold border border-amber-200 animate-pulse">📢 釋出中</span>}
-                                            </div>
-                                            </div>
-                                            <div className="text-right"><div className="text-xl font-black text-latte-600">${o.customerTotalTWD}</div><div className="flex gap-2 justify-end mt-1"><button onClick={() => setEditingOrder(o)} className="text-latte-400 p-2 hover:text-latte-600 bg-cream-50 rounded-lg active:scale-95"><Edit size={16}/></button><button onClick={() => deleteOrder(o.id)} className="text-cream-300 p-2 hover:text-rose-400 bg-cream-50 rounded-lg active:scale-95"><Trash2 size={16}/></button></div></div>
+                                            <div><div className="font-bold text-latte-800 text-lg">{o.customer}</div><div className="text-xs text-latte-500 font-bold">{o.productName} <span className="text-latte-300 font-normal">({o.variant})</span></div><div className="mt-1 text-xs bg-cream-100 inline-block px-2 py-0.5 rounded text-latte-600 font-bold border border-cream-200">¥{o.unitPriceJPY} x {o.qty}{o.ecoFeeTotal > 0 && <span className="text-emerald-600 ml-1">+環保</span>}</div></div>
+                                            <div className="text-right"><div className="text-xl font-black text-latte-600">${o.customerTotalTWD}</div><div className="flex gap-2 justify-end mt-1"><button onClick={(e) => { e.stopPropagation(); deleteOrder(o.id); }} className="text-cream-300 p-2 hover:text-rose-400 bg-cream-50 rounded-lg active:scale-95"><Trash2 size={16}/></button></div></div>
                                         </div>
-                                        <div className="grid grid-cols-2 gap-3"><button onClick={() => toggleStatus(o.id, 'isPurchased')} className={`text-xs py-2 rounded-xl font-bold flex items-center justify-center gap-1 border ${o.isPurchased ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-cream-50 text-latte-300 border-cream-200'}`}><CheckCircle2 size={14}/> {o.isPurchased ? '已核對' : '待核對'}</button><button onClick={() => toggleStatus(o.id, 'isPicked')} className={`text-xs py-2 rounded-xl font-bold flex items-center justify-center gap-1 border ${o.isPicked ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-cream-50 text-latte-300 border-cream-200'}`}><ShoppingBag size={14}/> {o.isPicked ? '已入袋' : '待入袋'}</button></div>
+                                        <div className="grid grid-cols-2 gap-3"><button onClick={(e) => { e.stopPropagation(); toggleStatus(o.id, 'isPurchased'); }} className={`text-xs py-2 rounded-xl font-bold flex items-center justify-center gap-1 border ${o.isPurchased ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-cream-50 text-latte-300 border-cream-200'}`}><CheckCircle2 size={14}/> {o.isPurchased ? '已核對' : '待核對'}</button><button onClick={(e) => { e.stopPropagation(); toggleStatus(o.id, 'isPicked'); }} className={`text-xs py-2 rounded-xl font-bold flex items-center justify-center gap-1 border ${o.isPicked ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-cream-50 text-latte-300 border-cream-200'}`}><ShoppingBag size={14}/> {o.isPicked ? '已入袋' : '待入袋'}</button></div>
                                     </div>
                                 ))}
+                                {filteredOrders.length === 0 && <div className="text-center text-latte-300 py-10">沒有符合的訂單</div>}
                             </div>
                         )}
 
+                        {/* 3. Customers Tab */}
                         {activeTab === 'customers' && (
                             <div className="space-y-2 animate-in">
                                 <div className="flex justify-between items-center px-2 mb-2"><span className="text-xs font-bold text-latte-400">共 {filteredCustomers.length} 位顧客</span></div>
@@ -424,11 +454,32 @@
                             </div>
                         )}
 
+                        {/* 4. Dashboard Tab */}
                         {activeTab === 'dashboard' && (
-                            <div className="grid grid-cols-2 gap-4 animate-in">
-                                <div className="bg-[#D98E73] text-white p-6 rounded-3xl shadow-lg relative overflow-hidden"><div className="absolute top-0 right-0 p-4 opacity-10"><Coins size={80}/></div><p className="text-xs font-bold opacity-90 tracking-wider">日幣總投</p><p className="text-3xl font-black mt-2">¥{stats.totalJPY.toLocaleString()}</p><p className="text-xs opacity-70 mt-1">共 {stats.totalCount} 顆</p></div>
-                                <div className="bg-[#BF9E85] text-white p-6 rounded-3xl shadow-lg relative overflow-hidden"><div className="absolute top-0 right-0 p-4 opacity-10"><DollarSign size={80}/></div><p className="text-xs font-bold opacity-90 tracking-wider">預估營收</p><p className="text-3xl font-black mt-2">${stats.totalRevenue.toLocaleString()}</p></div>
-                                <div className="col-span-2 bg-white p-6 rounded-3xl border border-cream-200 shadow-sm flex justify-around text-center gap-1">
+                            <div className="grid grid-cols-3 gap-3 animate-in">
+                                {/* JPY Total */}
+                                <div className="bg-[#D98E73] text-white p-4 rounded-2xl shadow-lg relative overflow-hidden flex flex-col justify-center items-center text-center">
+                                    <div className="opacity-10 absolute"><Coins size={60}/></div>
+                                    <p className="text-[10px] font-bold opacity-90 tracking-wider">日幣總投</p>
+                                    <p className="text-xl font-black mt-1">¥{stats.totalJPY.toLocaleString()}</p>
+                                </div>
+
+                                {/* Revenue */}
+                                <div className="bg-[#BF9E85] text-white p-4 rounded-2xl shadow-lg relative overflow-hidden flex flex-col justify-center items-center text-center">
+                                    <div className="opacity-10 absolute"><DollarSign size={60}/></div>
+                                    <p className="text-[10px] font-bold opacity-90 tracking-wider">預估營收</p>
+                                    <p className="text-xl font-black mt-1">${stats.totalRevenue.toLocaleString()}</p>
+                                </div>
+
+                                {/* Total Count */}
+                                <div className="bg-[#8C7A6B] text-white p-4 rounded-2xl shadow-lg relative overflow-hidden flex flex-col justify-center items-center text-center">
+                                    <div className="opacity-10 absolute"><Package size={60}/></div>
+                                    <p className="text-[10px] font-bold opacity-90 tracking-wider">總顆數</p>
+                                    <p className="text-xl font-black mt-1">{stats.totalCount}</p>
+                                </div>
+
+                                {/* Status Buttons */}
+                                <div className="col-span-3 bg-white p-4 rounded-3xl border border-cream-200 shadow-sm flex justify-around text-center gap-1">
                                     <button onClick={() => { setShowDashboardDetail('purchase'); setDashboardSearchQuery(''); }} className="flex-1 hover:bg-cream-50 rounded-xl transition p-2"><div className="text-3xl font-black text-latte-400">{stats.pendingPurchase}</div><div className="text-xs text-latte-300 font-bold mt-1">待核對</div></button>
                                     <div className="w-px bg-cream-200"></div>
                                     <button onClick={() => { setShowDashboardDetail('pick'); setDashboardSearchQuery(''); }} className="flex-1 hover:bg-cream-50 rounded-xl transition p-2"><div className="text-3xl font-black text-latte-600">{stats.pendingPick}</div><div className="text-xs text-latte-300 font-bold mt-1">待入袋</div></button>
@@ -441,7 +492,7 @@
 
                     {/* --- Modals --- */}
                     
-                    {/* Dashboard Detail (含釋出池邏輯) */}
+                    {/* Dashboard Detail */}
                     {showDashboardDetail && (
                         <div className="fixed inset-0 bg-latte-900/40 backdrop-blur-[2px] z-[200] flex items-center justify-center p-4">
                             <div className="bg-white rounded-[30px] w-full max-w-md h-[85vh] flex flex-col shadow-2xl animate-in">
@@ -497,7 +548,9 @@
                             <div className="bg-white rounded-[30px] w-full max-w-md p-6 space-y-5 shadow-2xl animate-in max-h-[85vh] overflow-y-auto">
                                 <div className="flex justify-between items-center border-b border-cream-200 pb-3"><h3 className="font-bold text-latte-800 text-lg flex items-center gap-2"><Settings size={20}/> 系統設定</h3><button onClick={()=>setShowGlobalSettings(false)} className="w-8 h-8 rounded-full bg-cream-200 text-latte-500 flex items-center justify-center"><X size={18}/></button></div>
                                 <div className="space-y-3"><h4 className="text-xs font-bold text-latte-400 uppercase">Cloud Sync</h4><input type="text" placeholder="Apps Script URL" className="w-full bg-cream-50 border border-cream-200 p-3 rounded-xl outline-none text-latte-800 text-xs focus:border-latte-400" value={apiUrl} onChange={e=>setApiUrl(e.target.value)}/><div className="grid grid-cols-2 gap-2"><button onClick={handleCloudUpload} disabled={isSyncing} className="bg-indigo-500 text-white py-3 rounded-xl font-bold shadow-md shadow-indigo-200 active:scale-95 transition flex flex-col items-center justify-center gap-1 disabled:opacity-50">{isSyncing?<Loader2 size={18} className="animate-spin"/>:<Cloud size={18}/>}<span className="text-xs">備份</span></button><button onClick={handleCloudDownload} disabled={isSyncing} className="bg-emerald-500 text-white py-3 rounded-xl font-bold shadow-md shadow-emerald-200 active:scale-95 transition flex flex-col items-center justify-center gap-1 disabled:opacity-50">{isSyncing?<Loader2 size={18} className="animate-spin"/>:<RefreshCcw size={18}/>}<span className="text-xs">還原</span></button></div></div>
-                                <div className="space-y-3 pt-2 border-t border-cream-100"><h4 className="text-xs font-bold text-latte-400 uppercase">Local</h4><button onClick={handleExportCSV} className="w-full bg-white border border-latte-200 text-latte-700 py-3 rounded-xl font-bold shadow-sm flex items-center justify-center gap-2 active:scale-95 transition"><FileSpreadsheet size={18} className="text-green-600"/> 匯出 CSV</button><div className="grid grid-cols-2 gap-2"><button onClick={handleExportBackup} className="bg-latte-100 text-latte-600 py-3 rounded-xl font-bold flex items-center justify-center gap-1 active:scale-95 transition"><FileJson size={16}/> 備份</button><label className="bg-latte-100 text-latte-600 py-3 rounded-xl font-bold flex items-center justify-center gap-1 active:scale-95 transition cursor-pointer"><Upload size={16}/> 還原<input type="file" className="hidden" ref={fileInputRef} onChange={handleImportBackup} accept=".json"/></label></div><button onClick={handleClearAllData} className="w-full bg-rose-50 border border-rose-100 text-rose-500 py-3 rounded-xl font-bold mt-2 flex items-center justify-center gap-2 active:scale-95 transition hover:bg-rose-100"><Trash2 size={18}/> 清除所有資料</button></div>
+                                <div className="space-y-3 pt-2 border-t border-cream-100"><h4 className="text-xs font-bold text-latte-400 uppercase">資料管理</h4><button onClick={handleExportCSV} className="w-full bg-white border border-latte-200 text-latte-700 py-3 rounded-xl font-bold shadow-sm flex items-center justify-center gap-2 active:scale-95 transition"><FileSpreadsheet size={18} className="text-green-600"/> 匯出 CSV</button><div className="grid grid-cols-2 gap-2"><button onClick={handleExportBackup} className="bg-latte-100 text-latte-600 py-3 rounded-xl font-bold flex items-center justify-center gap-1 active:scale-95 transition"><FileJson size={16}/> 備份</button><label className="bg-latte-100 text-latte-600 py-3 rounded-xl font-bold flex items-center justify-center gap-1 active:scale-95 transition cursor-pointer"><Upload size={16}/> 還原<input type="file" className="hidden" ref={fileInputRef} onChange={handleImportBackup} accept=".json"/></label></div>
+                                <button onClick={handleClearHistory} className="w-full bg-latte-100 text-latte-600 py-3 rounded-xl font-bold mt-2 flex items-center justify-center gap-2 active:scale-95 transition hover:bg-latte-200"><History size={18}/> 清除歷史紀錄</button>
+                                <button onClick={handleClearAllData} className="w-full bg-rose-50 border border-rose-100 text-rose-500 py-3 rounded-xl font-bold mt-2 flex items-center justify-center gap-2 active:scale-95 transition hover:bg-rose-100"><Trash2 size={18}/> 清除所有訂單</button></div>
                             </div>
                         </div>
                     )}
@@ -513,7 +566,7 @@
                         </div>
                     )}
 
-                    {/* Customer Detail */}
+                    {/* Customer Detail (Live Data) */}
                     {activeCustomerDetail && (
                         <div className="fixed inset-0 bg-latte-900/40 backdrop-blur-[2px] z-[160] flex items-end md:items-center justify-center p-0 md:p-4 animate-in">
                             <div className="bg-white rounded-t-[30px] md:rounded-3xl w-full max-w-md h-[85vh] flex flex-col shadow-2xl">
@@ -523,7 +576,7 @@
                                 </div>
                                 <div className="flex-1 overflow-y-auto p-4 space-y-3">
                                     {activeCustomerDetail.items.map((item)=>(
-                                        <div key={item.id} className={`flex justify-between items-center p-4 border rounded-2xl shadow-sm ${item.isReleasing ? 'bg-amber-50 border-amber-200' : 'bg-white border-cream-200'}`}>
+                                        <div key={item.id} className={`flex justify-between items-center p-4 border rounded-2xl shadow-sm transition-all cursor-pointer ${item.isReleasing ? 'bg-amber-50 border-amber-200' : 'bg-white border-cream-200 hover:border-latte-300 active:scale-[0.99]'}`} onClick={(e)=>{e.stopPropagation(); setEditingOrder(item);}}>
                                             <div>
                                                 <div className="font-bold text-sm text-latte-800">{item.productName}</div>
                                                 <div className="text-xs text-latte-400 mt-1 font-bold">{item.variant} {item.ecoFeeTotal > 0 && <span className="text-emerald-600 ml-1">(含環保)</span>} {item.isReleasing && <span className="text-amber-600 ml-1">📢 釋出中</span>}</div>
@@ -533,13 +586,11 @@
                                                     <div className="text-xs text-latte-400 mb-1">x {item.qty}</div>
                                                     <div className="text-sm text-latte-600 font-black">${item.customerTotalTWD}</div>
                                                 </div>
-                                                {/* 釋出按鈕 */}
                                                 {!item.isReleasing ? (
                                                     <button onClick={(e)=>{e.stopPropagation(); setReleasingOrder(item); setReleaseQty(1);}} className="p-2 bg-cream-100 text-latte-500 rounded-lg border border-cream-200 hover:bg-amber-100 hover:text-amber-600 transition"><Megaphone size={16}/></button>
                                                 ) : (
                                                     <button onClick={(e)=>{e.stopPropagation(); handleCancelRelease(item.id)}} className="p-2 bg-amber-100 text-amber-600 rounded-lg border border-amber-200 hover:bg-cream-100 transition"><Undo2 size={16}/></button>
                                                 )}
-                                                {/* 轉讓按鈕 */}
                                                 <button onClick={(e)=>{e.stopPropagation(); setTransferringOrder(item); setTransferTarget(''); setTransferQty(1);}} className="p-2 bg-cream-100 text-latte-500 rounded-lg border border-cream-200 hover:bg-latte-200 transition"><ArrowRightCircle size={16}/></button>
                                             </div>
                                         </div>
@@ -574,7 +625,7 @@
                                 <div className="space-y-3">
                                     <div><p className="text-sm text-latte-500 mb-1">商品：<strong>{transferringOrder.productName}</strong></p><p className="text-xs text-latte-400">持有：{transferringOrder.qty} 個</p></div>
                                     <div className="bg-cream-50 p-3 rounded-xl border border-cream-200 flex justify-between items-center"><span className="text-sm font-bold text-latte-600">數量</span><div className="flex items-center gap-3"><button onClick={()=>setTransferQty(Math.max(1, transferQty-1))} className="w-8 h-8 rounded-full bg-white shadow flex items-center justify-center text-latte-400 active:scale-90" disabled={transferQty<=1}><Minus size={14}/></button><span className="text-lg font-black w-8 text-center text-latte-800">{transferQty}</span><button onClick={()=>setTransferQty(Math.min(transferringOrder.qty, transferQty+1))} className="w-8 h-8 rounded-full bg-latte-500 text-white shadow flex items-center justify-center active:scale-90" disabled={transferQty>=transferringOrder.qty}><Plus size={14}/></button></div></div>
-                                    <div><p className="text-sm text-latte-500 mb-2">轉給誰：</p><input list="cl_trans" className="w-full bg-cream-50 border border-cream-200 p-3 rounded-xl outline-none font-bold text-latte-800" value={transferTarget} onChange={e => setTransferTarget(e.target.value)} placeholder="輸入新顧客名稱"/><datalist id="cl_trans">{filteredCustomers.map(c=><option key={c.name} value={c.name}/>)}</datalist></div>
+                                    <div><p className="text-sm text-latte-500 mb-2">對象：</p><input list="cl_trans" className="w-full bg-cream-50 border border-cream-200 p-3 rounded-xl outline-none font-bold text-latte-800" value={transferTarget} onChange={e => setTransferTarget(e.target.value)} placeholder="輸入新顧客名稱" list="hist-customers"/><datalist id="cl_trans">{history.customers.map(c=><option key={c} value={c}/>)}</datalist></div>
                                 </div>
                                 <button onClick={handleTransferOrder} disabled={!transferTarget} className="w-full bg-latte-600 text-white py-3.5 rounded-2xl font-bold shadow-lg active:scale-95 transition disabled:opacity-50">確認轉讓</button>
                             </div>
@@ -588,6 +639,77 @@
                                 <h3 className={`font-bold text-xl flex items-center gap-2 ${confirmConfig.type === 'danger' ? 'text-rose-500' : 'text-latte-800'}`}>{confirmConfig.type === 'danger' && <AlertCircle size={24}/>}{confirmConfig.title}</h3>
                                 <p className="text-latte-600 text-sm whitespace-pre-line leading-relaxed font-medium">{confirmConfig.message}</p>
                                 <div className="flex gap-3 pt-2"><button onClick={() => setConfirmConfig(null)} className="flex-1 py-3.5 rounded-2xl font-bold bg-cream-100 text-latte-500 hover:bg-cream-200 active:scale-95 transition-all">取消</button><button onClick={() => { confirmConfig.onConfirm(); setConfirmConfig(null); }} className={`flex-1 py-3.5 rounded-2xl font-bold text-white shadow-lg active:scale-95 transition-all flex justify-center items-center gap-1 ${confirmConfig.type === 'danger' ? 'bg-rose-500 hover:bg-rose-600' : 'bg-latte-500 hover:bg-latte-600'}`}>確認</button></div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Order Edit Modal (訂單編輯視窗 - 含釋出區保護) */}
+                    {editingOrder && (
+                        <div className="fixed inset-0 z-[250] flex items-center justify-center p-4 bg-latte-900/40 backdrop-blur-sm animate-in">
+                            <div className="bg-white rounded-[30px] w-full max-w-sm p-6 shadow-2xl space-y-4 flex flex-col">
+                                <div className="flex justify-between items-center border-b border-cream-200 pb-3">
+                                    <h3 className="font-bold text-latte-800 text-lg flex items-center gap-2"><Edit size={20}/> 編輯訂單</h3>
+                                    <button onClick={()=>setEditingOrder(null)} className="w-8 h-8 rounded-full bg-cream-200 text-latte-500 flex items-center justify-center"><X size={18}/></button>
+                                </div>
+                                
+                                {editingOrder.isReleasing ? (
+                                    <div className="space-y-4 py-4 text-center">
+                                        <div className="w-16 h-16 bg-cream-100 rounded-full flex items-center justify-center mx-auto text-latte-400">
+                                            <AlertCircle size={32}/>
+                                        </div>
+                                        <h4 className="font-bold text-lg text-latte-800">此為釋出區商品</h4>
+                                        <p className="text-sm text-latte-500">
+                                            釋出區商品為暫存狀態，不可直接修改內容。<br/>
+                                            請先將商品 <strong>轉讓</strong> 給確認認領的顧客，<br/>再進行規格修改。
+                                        </p>
+                                        <button 
+                                            onClick={() => {
+                                                setTransferringOrder(editingOrder);
+                                                setTransferQty(editingOrder.qty); // Default to full qty
+                                                setEditingOrder(null);
+                                            }}
+                                            className="w-full bg-latte-600 text-white py-3.5 rounded-2xl font-bold shadow-lg shadow-latte-600/20 active:scale-95 transition flex items-center justify-center gap-2"
+                                        >
+                                            <ArrowRightCircle size={18}/> 立即轉讓
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <div className="space-y-3 overflow-y-auto max-h-[60vh] p-1">
+                                            <div>
+                                                <label className="text-xs font-bold text-latte-400 ml-1">顧客名稱 (唯讀)</label>
+                                                <div className="w-full bg-cream-50 p-3 rounded-xl font-bold text-latte-600">{editingOrder.customer}</div>
+                                            </div>
+                                            <div>
+                                                <label className="text-xs font-bold text-latte-400 ml-1">機台名稱</label>
+                                                <input list="hist-machines" className="w-full bg-white border border-cream-200 p-3 rounded-xl outline-none focus:border-latte-400 font-bold text-latte-800" value={editingOrder.productName} onChange={e=>setEditingOrder({...editingOrder, productName: e.target.value})}/>
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <div className="flex-1">
+                                                    <label className="text-xs font-bold text-latte-400 ml-1">款式</label>
+                                                    <input list="hist-variants" className="w-full bg-white border border-cream-200 p-3 rounded-xl outline-none focus:border-latte-400 font-bold text-latte-800" value={editingOrder.variant} onChange={e=>setEditingOrder({...editingOrder, variant: e.target.value})}/>
+                                                </div>
+                                                <div className="w-24">
+                                                    <label className="text-xs font-bold text-latte-400 ml-1">數量</label>
+                                                    <div className="flex items-center bg-white border border-cream-200 rounded-xl p-1">
+                                                        <button onClick={()=>setEditingOrder({...editingOrder, qty: Math.max(1, editingOrder.qty-1)})} className="w-8 h-8 flex items-center justify-center text-latte-400 active:scale-90"><Minus size={14}/></button>
+                                                        <span className="flex-1 text-center font-bold text-latte-800">{editingOrder.qty}</span>
+                                                        <button onClick={()=>setEditingOrder({...editingOrder, qty: editingOrder.qty+1})} className="w-8 h-8 flex items-center justify-center text-latte-400 active:scale-90"><Plus size={14}/></button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <label className="text-xs font-bold text-latte-400 ml-1">單價 (NT$)</label>
+                                                <input type="number" className="w-full bg-white border border-cream-200 p-3 rounded-xl outline-none focus:border-latte-400 font-bold text-latte-800" value={editingOrder.unitPriceTWD} onChange={e=>setEditingOrder({...editingOrder, unitPriceTWD: parseInt(e.target.value)||0})}/>
+                                            </div>
+                                            <button onClick={()=>setEditingOrder({...editingOrder, ecoFeePerUnit: editingOrder.ecoFeePerUnit > 0 ? 0 : ECO_FEE})} className={`w-full py-3 rounded-xl border-2 font-bold transition-all flex items-center justify-center gap-2 ${editingOrder.ecoFeePerUnit > 0 ? 'border-emerald-400 bg-emerald-50 text-emerald-700' : 'border-cream-200 text-latte-300'}`}>
+                                                <span className="text-xs">環保費狀態:</span>
+                                                {editingOrder.ecoFeePerUnit > 0 ? '已啟用 (+10)' : '未啟用'}
+                                            </button>
+                                        </div>
+                                        <button onClick={handleSaveEditedOrder} className="w-full bg-latte-600 text-white py-3.5 rounded-2xl font-bold shadow-lg shadow-latte-600/20 active:scale-95 transition">儲存變更</button>
+                                    </>
+                                )}
                             </div>
                         </div>
                     )}
