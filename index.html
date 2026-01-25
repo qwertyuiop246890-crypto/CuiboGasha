@@ -64,7 +64,7 @@
             CheckCircle2, Truck, DollarSign, Search, X, ChevronRight, ClipboardList, 
             User, ListOrdered, Tag, CheckSquare, Trash2, Edit, Save, 
             Image as ImageIcon, Download, Loader2, Coins, Circle, ShoppingCart, Settings,
-            Cloud, Upload, FileJson, FileSpreadsheet, RefreshCcw, Minus, ArrowRightCircle, Megaphone, Undo2, History, Package
+            Cloud, Upload, FileJson, FileSpreadsheet, RefreshCcw, Minus, ArrowRightCircle, Megaphone, Undo2, History, Package, RotateCcw
         } from 'https://esm.sh/lucide-react@0.263.1?dev';
 
         const App = () => {
@@ -72,12 +72,19 @@
             const DEFAULT_PRICE_TABLE = { 100: 50, 200: 80, 300: 120, 400: 140, 500: 170, 600: 190, 800: 260, 1000: 360, 1500: 450 };
             const ECO_FEE = 10; 
             const RELEASE_ZONE_NAME = "釋出區";
+            // 使用者的 Google Apps Script API URL
+            const DEFAULT_API_URL = "https://script.google.com/macros/s/AKfycbzUzREPd7UAzndt6i4qN70nkd1ZUJWdzJa3DbQjN7yFZeJ2ne5Nj9f767-tMSaB7ayI/exec";
 
             // 2. 狀態
             const loadLocal = (key, def) => { const s = localStorage.getItem(key); return s ? JSON.parse(s) : def; };
             const [orders, setOrders] = useState(() => loadLocal('cuibo_gasha_orders', []));
-            const [priceTable, setPriceTable] = useState(() => loadLocal('cuibo_gasha_pricetable', DEFAULT_PRICE_TABLE));
-            const [apiUrl, setApiUrl] = useState(() => localStorage.getItem('cuibo_gasha_api_url') || '');
+            const [priceTable, setPriceTable] = useState(() => {
+                const loaded = loadLocal('cuibo_gasha_pricetable', null);
+                if (!loaded || Object.keys(loaded).length === 0) return DEFAULT_PRICE_TABLE;
+                return loaded;
+            });
+            // 優先使用 localStorage 的設定，如果沒有則使用預設 API URL
+            const [apiUrl, setApiUrl] = useState(() => localStorage.getItem('cuibo_gasha_api_url') || DEFAULT_API_URL);
             
             // 歷史紀錄
             const [history, setHistory] = useState(() => loadLocal('cuibo_gasha_history', { machines: [], customers: [], variants: [] }));
@@ -156,8 +163,8 @@
                 const totalRevenue = orders.reduce((acc, o) => acc + o.customerTotalTWD, 0);
                 const totalJPY = orders.reduce((acc, o) => acc + o.gashaTotalJPY, 0);
                 const totalCount = orders.reduce((acc, o) => acc + o.qty, 0);
-                const pendingPurchase = orders.filter(o => !o.isPurchased).reduce((acc, o) => acc + o.qty, 0);
-                const pendingPick = orders.filter(o => o.isPurchased && !o.isPicked).reduce((acc, o) => acc + o.qty, 0);
+                const pendingPurchase = orders.filter(o => !o.isPurchased && !o.isReleasing).reduce((acc, o) => acc + o.qty, 0);
+                const pendingPick = orders.filter(o => o.isPurchased && !o.isPicked && !o.isReleasing).reduce((acc, o) => acc + o.qty, 0);
                 const releasingCount = orders.filter(o => o.isReleasing).reduce((acc, o) => acc + o.qty, 0);
                 return { totalRevenue, totalJPY, totalCount, pendingPurchase, pendingPick, releasingCount };
             }, [orders]);
@@ -166,9 +173,13 @@
 
             const getDashboardDetailOrders = () => {
                 let list = [];
-                if (showDashboardDetail === 'purchase') list = orders.filter(o => !o.isPurchased);
-                else if (showDashboardDetail === 'pick') list = orders.filter(o => o.isPurchased && !o.isPicked);
-                else if (showDashboardDetail === 'releasing') list = orders.filter(o => o.isReleasing);
+                if (showDashboardDetail === 'purchase') {
+                    list = orders.filter(o => !o.isPurchased && !o.isReleasing);
+                } else if (showDashboardDetail === 'pick') {
+                    list = orders.filter(o => o.isPurchased && !o.isPicked && !o.isReleasing);
+                } else if (showDashboardDetail === 'releasing') {
+                    list = orders.filter(o => o.isReleasing);
+                }
                 
                 if (dashboardSearchQuery) list = list.filter(o => o.customer.includes(dashboardSearchQuery) || o.productName.includes(dashboardSearchQuery));
                 return list.sort((a, b) => a.productName.localeCompare(b.productName));
@@ -183,18 +194,20 @@
             const handlePriceSelect = (jpy) => setCurrentMachine(p => ({ ...p, priceJPY: jpy, priceTWD: priceTable[jpy] || 0 }));
             
             const addOrder = () => {
-                if (!currentMachine.name) return notify("請輸入機台名稱");
-                if (!inputCustomer) return notify("請輸入顧客名稱");
+                if (!inputCustomer.trim()) return notify("請輸入顧客名稱");
+                if (!currentMachine.name.trim()) return notify("請輸入機台名稱");
+                if (!currentMachine.variant.trim()) return notify("請輸入款式");
+
                 const unitPriceTWD = currentMachine.priceTWD;
                 const ecoTotal = isEco ? (ECO_FEE * inputQty) : 0;
                 
                 updateHistory('machines', currentMachine.name);
                 updateHistory('customers', inputCustomer);
-                if (currentMachine.variant) updateHistory('variants', currentMachine.variant);
+                updateHistory('variants', currentMachine.variant);
 
                 const newOrder = {
                     id: Date.now(), date: new Date().toISOString().split('T')[0],
-                    customer: inputCustomer.trim(), productName: currentMachine.name, variant: currentMachine.variant || '隨機', qty: inputQty,
+                    customer: inputCustomer.trim(), productName: currentMachine.name, variant: currentMachine.variant.trim(), qty: inputQty,
                     unitPriceJPY: currentMachine.priceJPY, unitPriceTWD: unitPriceTWD,
                     ecoFeePerUnit: isEco ? ECO_FEE : 0, ecoFeeTotal: ecoTotal,
                     gashaTotalJPY: currentMachine.priceJPY * inputQty, gashaTotalTWD: unitPriceTWD * inputQty, customerTotalTWD: (unitPriceTWD * inputQty) + ecoTotal,
@@ -294,14 +307,54 @@
             const handleExportCSV = () => { const bom="\uFEFF"; const h="日期,顧客,機台,款式,數量,單價(台),總額,核對,入袋,釋出中\n"; const r=orders.map(o=>`${o.date},${o.customer},${o.productName},${o.variant},${o.qty},${o.unitPriceTWD},${o.customerTotalTWD},${o.isPurchased?'V':'X'},${o.isPicked?'V':'X'},${o.isReleasing?'Y':''}`).join("\n"); saveAs(new Blob([bom+h+r],{type:"text/csv"}),"Export.csv"); notify("CSV下載"); };
             const handleCloudUpload = async () => { if(!apiUrl)return notify("無API"); setIsSyncing(true); try{ await fetch(apiUrl,{method:'POST',body:JSON.stringify({orders,priceTable,history,timestamp:new Date().toISOString()})}); notify("備份成功"); }catch(e){notify("失敗");}finally{setIsSyncing(false);} };
             const handleCloudDownload = async () => { if(!apiUrl)return notify("無API"); setIsSyncing(true); try{ const r=await fetch(apiUrl); const d=await r.json(); if(d.orders) triggerConfirm('同步',`時間:${d.timestamp}`,()=>{setOrders(d.orders);if(d.priceTable)setPriceTable(d.priceTable);if(d.history)setHistory(d.history);notify("成功");setShowGlobalSettings(false);},'danger'); }catch(e){notify("失敗");}finally{setIsSyncing(false);} };
-            const handleSaveEditedOrder = () => { if(!editingOrder) return; const eco=editingOrder.ecoFeePerUnit*editingOrder.qty; setOrders(p=>p.map(o=>o.id===editingOrder.id?{...editingOrder,ecoFeeTotal:eco,customerTotalTWD:(editingOrder.unitPriceTWD*editingOrder.qty)+eco,gashaTotalJPY:editingOrder.unitPriceJPY*editingOrder.qty,gashaTotalTWD:editingOrder.unitPriceTWD*editingOrder.qty}:o)); setEditingOrder(null); notify("已更新"); };
+            
+            const handleSaveEditedOrder = () => { 
+                if(!editingOrder) return;
+                if(!editingOrder.productName.trim()) return notify("機台名稱不可為空");
+                if(!editingOrder.variant.trim()) return notify("款式不可為空");
+
+                const eco=editingOrder.ecoFeePerUnit*editingOrder.qty; 
+                setOrders(p=>p.map(o=>o.id===editingOrder.id?{...editingOrder,ecoFeeTotal:eco,customerTotalTWD:(editingOrder.unitPriceTWD*editingOrder.qty)+eco,gashaTotalJPY:editingOrder.unitPriceJPY*editingOrder.qty,gashaTotalTWD:editingOrder.unitPriceTWD*editingOrder.qty}:o)); 
+                setEditingOrder(null); 
+                notify("已更新"); 
+            };
+            
             const initiateStatusUpdate = (order, targetStatus) => { if (order.qty === 1) { setOrders(p => p.map(o => o.id === order.id ? { ...o, [targetStatus]: true } : o)); notify("已更新"); return; } setStatusUpdateData({ order, targetStatus, maxQty: order.qty }); setStatusUpdateQty(order.qty); };
             const confirmStatusUpdate = () => { if (!statusUpdateData) return; const { order, targetStatus } = statusUpdateData; const qtyToUpdate = parseInt(statusUpdateQty); if (qtyToUpdate <= 0 || qtyToUpdate > order.qty) return; setOrders(prev => { if (qtyToUpdate === order.qty) return prev.map(o => o.id === order.id ? { ...o, [targetStatus]: true } : o); const updatedOrders = []; const ecoNew = order.ecoFeePerUnit * qtyToUpdate; updatedOrders.push({ ...order, id: Date.now(), qty: qtyToUpdate, ecoFeeTotal: ecoNew, gashaTotalJPY: order.unitPriceJPY*qtyToUpdate, gashaTotalTWD: order.unitPriceTWD*qtyToUpdate, customerTotalTWD: (order.unitPriceTWD*qtyToUpdate)+ecoNew, [targetStatus]: true }); prev.forEach(o => { if (o.id === order.id) { const leftQty = o.qty - qtyToUpdate; updatedOrders.push({ ...o, qty: leftQty, ecoFeeTotal: o.ecoFeePerUnit*leftQty, gashaTotalJPY: o.unitPriceJPY*leftQty, gashaTotalTWD: o.unitPriceTWD*leftQty, customerTotalTWD: (o.unitPriceTWD*leftQty)+(o.ecoFeePerUnit*leftQty) }); } else updatedOrders.push(o); }); return updatedOrders; }); setStatusUpdateData(null); notify(`已更新 ${qtyToUpdate} 個`); };
-            const openPriceEditor = () => { setEditingPrices(Object.entries(priceTable).map(([j,t])=>({id:Date.now()+Math.random(),j:parseInt(j),t:parseInt(t)})).sort((a,b)=>a.j-b.j)); setShowPriceEditor(true); };
-            const addPriceRow = () => setEditingPrices(prev => [...prev, { id: Date.now(), jpy: '', twd: '' }]);
+            
+            // 修正：價格編輯器 (確保有資料)
+            const openPriceEditor = () => { 
+                let source = priceTable;
+                // 防呆：如果是空的，強制使用預設值
+                if (!source || Object.keys(source).length === 0) {
+                    source = DEFAULT_PRICE_TABLE;
+                }
+                const list = Object.entries(source).map(([j,t])=>({
+                    id: Date.now()+Math.random(),
+                    j: parseInt(j) || 0,
+                    t: parseInt(t) || 0
+                })).sort((a,b)=>a.j-b.j);
+                
+                setEditingPrices(list); 
+                setShowPriceEditor(true); 
+            };
+            const addPriceRow = () => setEditingPrices(prev => [...prev, { id: Date.now(), j: '', t: '' }]);
             const removePriceRow = (id) => setEditingPrices(prev => prev.filter(p => p.id !== id));
-            const updatePriceRow = (id, field, val) => setEditingPrices(prev => prev.map(p => p.id === id ? { ...p, [field]: parseInt(val) || '' } : p));
-            const savePriceEditor = () => { const t = {}; editingPrices.forEach(p => { if (p.jpy && p.twd) t[p.jpy] = p.twd; }); setPriceTable(t); setShowPriceEditor(false); notify("價格已更新"); };
+            // 修正：Input value 處理，避免 NaN
+            const updatePriceRow = (id, field, val) => setEditingPrices(prev => prev.map(p => p.id === id ? { ...p, [field]: val === '' ? '' : parseInt(val) } : p));
+            
+            // 修正：儲存時過濾無效值，確保 priceTable 乾淨
+            const savePriceEditor = () => { 
+                const t = {}; 
+                editingPrices.forEach(p => { 
+                    if (p.j && p.t) t[p.j] = p.t; 
+                }); 
+                setPriceTable(t); 
+                setShowPriceEditor(false); 
+                notify("價格已更新"); 
+            };
+            const handleResetPrice = () => { if(confirm("確定恢復預設價格表？")) { setPriceTable(DEFAULT_PRICE_TABLE); setShowPriceEditor(false); notify("已恢復預設"); } };
+
             const handleCopyOrderText = (c) => { if(!c) return; let t = `親愛的 ${c.name} 您好，\n明細如下：\n`; c.items.forEach(i => t+=`${i.productName} ${i.variant} x${i.qty} $${i.customerTotalTWD}${i.isReleasing?' (釋出中)':''}\n`); t+=`------------\n總額：$${c.totalSpent.toLocaleString()}\n請確認無誤後匯款，謝謝！`; const ta = document.createElement("textarea"); ta.value = t; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); notify("已複製"); };
             const handleExportToImage = async (c) => { if(!c) return; setExportTargetCustomer(c); await new Promise(r=>setTimeout(r,100)); const el = document.getElementById('hidden-receipt-container'); if(el) { try { const cvs = await html2canvas(el,{useCORS:true,scale:2,backgroundColor:'#FCF4E9'}); saveAs(cvs.toDataURL(), `${c.name}.png`); notify("圖片下載"); } catch(e){ notify("失敗"); } finally { setExportTargetCustomer(null); } } };
 
@@ -337,7 +390,7 @@
                                             list="hist-customers"
                                             placeholder="誰要買? (輸入顧客名)" 
                                             className="flex-1 bg-cream-50 rounded-xl py-3 px-4 font-bold text-lg outline-none focus:ring-2 ring-latte-300 text-latte-800"
-                                            value={inputCustomer}
+                                            value={inputCustomer || ''}
                                             onChange={e => setInputCustomer(e.target.value)}
                                         />
                                         <datalist id="hist-customers">
@@ -357,7 +410,7 @@
                                         list="hist-machines"
                                         placeholder="輸入機台名稱 (例: 吉伊卡哇)" 
                                         className="w-full text-lg font-bold border-b-2 border-cream-200 focus:border-latte-400 outline-none pb-2 mb-4 placeholder-latte-300 bg-transparent text-latte-800"
-                                        value={currentMachine.name}
+                                        value={currentMachine.name || ''}
                                         onChange={e => setCurrentMachine({...currentMachine, name: e.target.value})}
                                     />
                                     <datalist id="hist-machines">
@@ -386,9 +439,9 @@
                                         <input 
                                             type="text" 
                                             list="hist-variants"
-                                            placeholder="款式 (預設隨機)" 
+                                            placeholder="輸入款式 (無預設)" 
                                             className="w-full text-sm bg-cream-50 rounded-xl p-3 outline-none text-latte-800"
-                                            value={currentMachine.variant}
+                                            value={currentMachine.variant || ''}
                                             onChange={e => setCurrentMachine({...currentMachine, variant: e.target.value})}
                                         />
                                         <datalist id="hist-variants">
@@ -427,7 +480,7 @@
                         {/* 2. List Tab */}
                         {activeTab === 'list' && (
                             <div className="space-y-3 animate-in">
-                                <div className="relative mb-4"><input type="text" placeholder="搜尋..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full bg-white rounded-xl p-3 pl-10 border border-cream-200 outline-none focus:border-latte-400 text-latte-800" /><Search size={16} className="absolute left-3 top-3.5 text-latte-300" /></div>
+                                <div className="relative mb-4"><input type="text" placeholder="搜尋..." value={searchQuery || ''} onChange={e => setSearchQuery(e.target.value)} className="w-full bg-white rounded-xl p-3 pl-10 border border-cream-200 outline-none focus:border-latte-400 text-latte-800" /><Search size={16} className="absolute left-3 top-3.5 text-latte-300" /></div>
                                 {filteredOrders.map(o => (
                                     <div key={o.id} onClick={() => setEditingOrder(o)} className={`bg-white p-4 rounded-3xl shadow-soft border border-cream-200 transition-all cursor-pointer hover:border-latte-300 active:scale-[0.99] ${o.isPicked ? 'opacity-60 bg-cream-50' : ''}`}>
                                         <div className="flex justify-between items-start mb-3">
@@ -510,7 +563,7 @@
                                         {uniqueCustomersInDashboard.map(n => <button key={n} onClick={() => setDashboardSearchQuery(n === dashboardSearchQuery ? '' : n)} className={`px-3 py-1 rounded-full text-xs font-bold border transition-colors ${n === dashboardSearchQuery ? 'bg-latte-500 text-white border-latte-500' : 'bg-white text-latte-600 border-cream-200'}`}>{n}</button>)}
                                     </div>
                                 )}
-                                <div className="p-4 pb-0"><div className="relative"><input type="text" placeholder="搜尋..." className="w-full bg-cream-50 border border-cream-200 p-2 pl-9 rounded-xl text-sm outline-none focus:border-latte-400 text-latte-800" value={dashboardSearchQuery} onChange={e => setDashboardSearchQuery(e.target.value)}/><Search size={14} className="absolute left-3 top-2.5 text-latte-400"/></div></div>
+                                <div className="p-4 pb-0"><div className="relative"><input type="text" placeholder="搜尋..." className="w-full bg-cream-50 border border-cream-200 p-2 pl-9 rounded-xl text-sm outline-none focus:border-latte-400 text-latte-800" value={dashboardSearchQuery || ''} onChange={e => setDashboardSearchQuery(e.target.value)}/><Search size={14} className="absolute left-3 top-2.5 text-latte-400"/></div></div>
                                 <div className="flex-1 overflow-y-auto p-4 space-y-3">
                                     {getDashboardDetailOrders().map(o => (
                                          <div key={o.id} className="bg-white p-4 rounded-2xl border border-cream-200 shadow-sm flex justify-between items-center">
@@ -560,7 +613,7 @@
                         <div className="fixed inset-0 bg-latte-900/40 backdrop-blur-[2px] z-[200] flex items-center justify-center p-4">
                             <div className="bg-white rounded-[30px] w-full max-w-md p-6 space-y-4 shadow-2xl animate-in max-h-[85vh] flex flex-col">
                                 <div className="flex justify-between items-center border-b border-cream-200 pb-3"><h3 className="font-bold text-latte-800 text-lg flex items-center gap-2"><Edit size={20}/> 價格表</h3><button onClick={()=>setShowPriceEditor(false)} className="w-8 h-8 rounded-full bg-cream-200 text-latte-500 flex items-center justify-center"><X size={18}/></button></div>
-                                <div className="flex-1 overflow-y-auto space-y-2 p-1">{editingPrices.map(p => (<div key={p.id} className="flex gap-2 items-center"><input type="number" className="flex-1 bg-cream-50 border border-cream-200 p-2 rounded-xl text-center font-bold text-latte-800 outline-none" value={p.jpy} onChange={e=>{setEditingPrices(pre=>pre.map(x=>x.id===p.id?{...x,jpy:e.target.value}:x))}}/><ArrowRight size={14} className="text-latte-300"/><input type="number" className="flex-1 bg-cream-50 border border-cream-200 p-2 rounded-xl text-center font-bold text-latte-600 outline-none" value={p.twd} onChange={e=>{setEditingPrices(pre=>pre.map(x=>x.id===p.id?{...x,twd:e.target.value}:x))}}/><button onClick={()=>{setEditingPrices(pre=>pre.filter(x=>x.id!==p.id))}} className="w-8 h-8 flex items-center justify-center text-cream-300 hover:text-rose-500"><Trash2 size={16}/></button></div>))}<button onClick={addPriceRow} className="w-full py-3 border border-dashed border-latte-300 rounded-xl text-latte-400 text-sm font-bold flex items-center justify-center gap-1"><Plus size={16}/> 新增</button></div>
+                                <div className="flex-1 overflow-y-auto space-y-2 p-1">{editingPrices.map(p => (<div key={p.id} className="flex gap-2 items-center"><input type="number" className="flex-1 bg-cream-50 border border-cream-200 p-2 rounded-xl text-center font-bold text-latte-800 outline-none" value={p.j === 0 ? 0 : (p.j || '')} onChange={e=>{setEditingPrices(pre=>pre.map(x=>x.id===p.id?{...x,j:e.target.value === '' ? '' : parseInt(e.target.value)}:x))}}/><ArrowRight size={14} className="text-latte-300"/><input type="number" className="flex-1 bg-cream-50 border border-cream-200 p-2 rounded-xl text-center font-bold text-latte-600 outline-none" value={p.t === 0 ? 0 : (p.t || '')} onChange={e=>{setEditingPrices(pre=>pre.map(x=>x.id===p.id?{...x,t:e.target.value === '' ? '' : parseInt(e.target.value)}:x))}}/><button onClick={()=>{setEditingPrices(pre=>pre.filter(x=>x.id!==p.id))}} className="w-8 h-8 flex items-center justify-center text-cream-300 hover:text-rose-500"><Trash2 size={16}/></button></div>))}<div className="flex gap-2"><button onClick={handleResetPrice} className="flex-1 py-3 border border-dashed border-rose-300 bg-rose-50 text-rose-500 rounded-xl text-sm font-bold flex items-center justify-center gap-1"><RotateCcw size={16}/> 恢復預設</button><button onClick={addPriceRow} className="flex-1 py-3 border border-dashed border-latte-300 rounded-xl text-latte-400 text-sm font-bold flex items-center justify-center gap-1"><Plus size={16}/> 新增</button></div></div>
                                 <button onClick={savePriceEditor} className="w-full bg-latte-600 text-white py-3 rounded-xl font-bold shadow-lg active:scale-95 transition">儲存</button>
                             </div>
                         </div>
@@ -625,7 +678,7 @@
                                 <div className="space-y-3">
                                     <div><p className="text-sm text-latte-500 mb-1">商品：<strong>{transferringOrder.productName}</strong></p><p className="text-xs text-latte-400">持有：{transferringOrder.qty} 個</p></div>
                                     <div className="bg-cream-50 p-3 rounded-xl border border-cream-200 flex justify-between items-center"><span className="text-sm font-bold text-latte-600">數量</span><div className="flex items-center gap-3"><button onClick={()=>setTransferQty(Math.max(1, transferQty-1))} className="w-8 h-8 rounded-full bg-white shadow flex items-center justify-center text-latte-400 active:scale-90" disabled={transferQty<=1}><Minus size={14}/></button><span className="text-lg font-black w-8 text-center text-latte-800">{transferQty}</span><button onClick={()=>setTransferQty(Math.min(transferringOrder.qty, transferQty+1))} className="w-8 h-8 rounded-full bg-latte-500 text-white shadow flex items-center justify-center active:scale-90" disabled={transferQty>=transferringOrder.qty}><Plus size={14}/></button></div></div>
-                                    <div><p className="text-sm text-latte-500 mb-2">對象：</p><input list="cl_trans" className="w-full bg-cream-50 border border-cream-200 p-3 rounded-xl outline-none font-bold text-latte-800" value={transferTarget} onChange={e => setTransferTarget(e.target.value)} placeholder="輸入新顧客名稱" list="hist-customers"/><datalist id="cl_trans">{history.customers.map(c=><option key={c} value={c}/>)}</datalist></div>
+                                    <div><p className="text-sm text-latte-500 mb-2">對象：</p><input list="cl_trans" className="w-full bg-cream-50 border border-cream-200 p-3 rounded-xl outline-none font-bold text-latte-800" value={transferTarget || ''} onChange={e => setTransferTarget(e.target.value)} placeholder="輸入新顧客名稱" list="hist-customers"/><datalist id="cl_trans">{history.customers.map(c=><option key={c} value={c}/>)}</datalist></div>
                                 </div>
                                 <button onClick={handleTransferOrder} disabled={!transferTarget} className="w-full bg-latte-600 text-white py-3.5 rounded-2xl font-bold shadow-lg active:scale-95 transition disabled:opacity-50">確認轉讓</button>
                             </div>
@@ -682,12 +735,12 @@
                                             </div>
                                             <div>
                                                 <label className="text-xs font-bold text-latte-400 ml-1">機台名稱</label>
-                                                <input list="hist-machines" className="w-full bg-white border border-cream-200 p-3 rounded-xl outline-none focus:border-latte-400 font-bold text-latte-800" value={editingOrder.productName} onChange={e=>setEditingOrder({...editingOrder, productName: e.target.value})}/>
+                                                <input list="hist-machines" className="w-full bg-white border border-cream-200 p-3 rounded-xl outline-none focus:border-latte-400 font-bold text-latte-800" value={editingOrder.productName || ''} onChange={e=>setEditingOrder({...editingOrder, productName: e.target.value})}/>
                                             </div>
                                             <div className="flex gap-2">
                                                 <div className="flex-1">
                                                     <label className="text-xs font-bold text-latte-400 ml-1">款式</label>
-                                                    <input list="hist-variants" className="w-full bg-white border border-cream-200 p-3 rounded-xl outline-none focus:border-latte-400 font-bold text-latte-800" value={editingOrder.variant} onChange={e=>setEditingOrder({...editingOrder, variant: e.target.value})}/>
+                                                    <input list="hist-variants" className="w-full bg-white border border-cream-200 p-3 rounded-xl outline-none focus:border-latte-400 font-bold text-latte-800" value={editingOrder.variant || ''} onChange={e=>setEditingOrder({...editingOrder, variant: e.target.value})}/>
                                                 </div>
                                                 <div className="w-24">
                                                     <label className="text-xs font-bold text-latte-400 ml-1">數量</label>
@@ -700,7 +753,7 @@
                                             </div>
                                             <div>
                                                 <label className="text-xs font-bold text-latte-400 ml-1">單價 (NT$)</label>
-                                                <input type="number" className="w-full bg-white border border-cream-200 p-3 rounded-xl outline-none focus:border-latte-400 font-bold text-latte-800" value={editingOrder.unitPriceTWD} onChange={e=>setEditingOrder({...editingOrder, unitPriceTWD: parseInt(e.target.value)||0})}/>
+                                                <input type="number" className="w-full bg-white border border-cream-200 p-3 rounded-xl outline-none focus:border-latte-400 font-bold text-latte-800" value={editingOrder.unitPriceTWD === 0 ? 0 : (editingOrder.unitPriceTWD || '')} onChange={e=>setEditingOrder({...editingOrder, unitPriceTWD: parseInt(e.target.value)||0})}/>
                                             </div>
                                             <button onClick={()=>setEditingOrder({...editingOrder, ecoFeePerUnit: editingOrder.ecoFeePerUnit > 0 ? 0 : ECO_FEE})} className={`w-full py-3 rounded-xl border-2 font-bold transition-all flex items-center justify-center gap-2 ${editingOrder.ecoFeePerUnit > 0 ? 'border-emerald-400 bg-emerald-50 text-emerald-700' : 'border-cream-200 text-latte-300'}`}>
                                                 <span className="text-xs">環保費狀態:</span>
