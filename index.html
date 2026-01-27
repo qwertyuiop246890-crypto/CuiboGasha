@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Cuibo Gasha WMS Pro</title>
+    <title>Cuibo Gasha WMS Pro v2</title>
     
     <!-- 1. 載入 Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -38,6 +38,7 @@
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         
+        /* 隱藏的收據容器，雖然看不見但不能設為 display:none，否則 html2canvas 抓不到 */
         #hidden-receipt-container { position: fixed; top: 0; left: -9999px; width: 500px; background-color: #FCF4E9; z-index: -100; padding: 40px; }
         .receipt-card { background: #fff; padding: 30px; border-radius: 20px; border: 1px solid #EBE0D6; }
         .receipt-header { text-align: center; border-bottom: 2px dashed #D3C5BC; padding-bottom: 20px; margin-bottom: 20px; }
@@ -64,7 +65,8 @@
             CheckCircle2, Truck, DollarSign, Search, X, ChevronRight, ClipboardList, 
             User, ListOrdered, Tag, CheckSquare, Trash2, Edit, Save, 
             Image as ImageIcon, Download, Loader2, Coins, Circle, ShoppingCart, Settings,
-            Cloud, Upload, FileJson, FileSpreadsheet, RefreshCcw, Minus, ArrowRightCircle, Megaphone, Undo2, History, Package, RotateCcw
+            Cloud, Upload, FileJson, FileSpreadsheet, RefreshCcw, Minus, ArrowRightCircle, Megaphone, Undo2, History, Package, RotateCcw,
+            FileArchive
         } from 'https://esm.sh/lucide-react@0.263.1?dev';
 
         const App = () => {
@@ -72,7 +74,6 @@
             const DEFAULT_PRICE_TABLE = { 100: 50, 200: 80, 300: 120, 400: 140, 500: 170, 600: 190, 800: 260, 1000: 360, 1500: 450 };
             const ECO_FEE = 10; 
             const RELEASE_ZONE_NAME = "釋出區";
-            // 使用者的 Google Apps Script API URL
             const DEFAULT_API_URL = "https://script.google.com/macros/s/AKfycbzUzREPd7UAzndt6i4qN70nkd1ZUJWdzJa3DbQjN7yFZeJ2ne5Nj9f767-tMSaB7ayI/exec";
 
             // 2. 狀態
@@ -83,7 +84,6 @@
                 if (!loaded || Object.keys(loaded).length === 0) return DEFAULT_PRICE_TABLE;
                 return loaded;
             });
-            // 優先使用 localStorage 的設定，如果沒有則使用預設 API URL
             const [apiUrl, setApiUrl] = useState(() => localStorage.getItem('cuibo_gasha_api_url') || DEFAULT_API_URL);
             
             // 歷史紀錄
@@ -98,7 +98,12 @@
             const [searchQuery, setSearchQuery] = useState('');
             const [selectedCustomerName, setSelectedCustomerName] = useState(null); 
             const [notification, setNotification] = useState(null);
+            
+            // 匯出相關狀態
             const [exportTargetCustomer, setExportTargetCustomer] = useState(null);
+            const [isBatchExporting, setIsBatchExporting] = useState(false); // 新增：批量匯出狀態
+            const [batchProgress, setBatchProgress] = useState(''); // 新增：批量進度文字
+            
             const [isSyncing, setIsSyncing] = useState(false);
             
             const [showPriceEditor, setShowPriceEditor] = useState(false);
@@ -322,10 +327,8 @@
             const initiateStatusUpdate = (order, targetStatus) => { if (order.qty === 1) { setOrders(p => p.map(o => o.id === order.id ? { ...o, [targetStatus]: true } : o)); notify("已更新"); return; } setStatusUpdateData({ order, targetStatus, maxQty: order.qty }); setStatusUpdateQty(order.qty); };
             const confirmStatusUpdate = () => { if (!statusUpdateData) return; const { order, targetStatus } = statusUpdateData; const qtyToUpdate = parseInt(statusUpdateQty); if (qtyToUpdate <= 0 || qtyToUpdate > order.qty) return; setOrders(prev => { if (qtyToUpdate === order.qty) return prev.map(o => o.id === order.id ? { ...o, [targetStatus]: true } : o); const updatedOrders = []; const ecoNew = order.ecoFeePerUnit * qtyToUpdate; updatedOrders.push({ ...order, id: Date.now(), qty: qtyToUpdate, ecoFeeTotal: ecoNew, gashaTotalJPY: order.unitPriceJPY*qtyToUpdate, gashaTotalTWD: order.unitPriceTWD*qtyToUpdate, customerTotalTWD: (order.unitPriceTWD*qtyToUpdate)+ecoNew, [targetStatus]: true }); prev.forEach(o => { if (o.id === order.id) { const leftQty = o.qty - qtyToUpdate; updatedOrders.push({ ...o, qty: leftQty, ecoFeeTotal: o.ecoFeePerUnit*leftQty, gashaTotalJPY: o.unitPriceJPY*leftQty, gashaTotalTWD: o.unitPriceTWD*leftQty, customerTotalTWD: (o.unitPriceTWD*leftQty)+(o.ecoFeePerUnit*leftQty) }); } else updatedOrders.push(o); }); return updatedOrders; }); setStatusUpdateData(null); notify(`已更新 ${qtyToUpdate} 個`); };
             
-            // 修正：價格編輯器 (確保有資料)
             const openPriceEditor = () => { 
                 let source = priceTable;
-                // 防呆：如果是空的，強制使用預設值
                 if (!source || Object.keys(source).length === 0) {
                     source = DEFAULT_PRICE_TABLE;
                 }
@@ -340,10 +343,8 @@
             };
             const addPriceRow = () => setEditingPrices(prev => [...prev, { id: Date.now(), j: '', t: '' }]);
             const removePriceRow = (id) => setEditingPrices(prev => prev.filter(p => p.id !== id));
-            // 修正：Input value 處理，避免 NaN
             const updatePriceRow = (id, field, val) => setEditingPrices(prev => prev.map(p => p.id === id ? { ...p, [field]: val === '' ? '' : parseInt(val) } : p));
             
-            // 修正：儲存時過濾無效值，確保 priceTable 乾淨
             const savePriceEditor = () => { 
                 const t = {}; 
                 editingPrices.forEach(p => { 
@@ -355,8 +356,108 @@
             };
             const handleResetPrice = () => { if(confirm("確定恢復預設價格表？")) { setPriceTable(DEFAULT_PRICE_TABLE); setShowPriceEditor(false); notify("已恢復預設"); } };
 
-            const handleCopyOrderText = (c) => { if(!c) return; let t = `親愛的 ${c.name} 您好，\n明細如下：\n`; c.items.forEach(i => t+=`${i.productName} ${i.variant} x${i.qty} $${i.customerTotalTWD}${i.isReleasing?' (釋出中)':''}\n`); t+=`------------\n總額：$${c.totalSpent.toLocaleString()}\n請確認無誤後匯款，謝謝！`; const ta = document.createElement("textarea"); ta.value = t; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); notify("已複製"); };
-            const handleExportToImage = async (c) => { if(!c) return; setExportTargetCustomer(c); await new Promise(r=>setTimeout(r,100)); const el = document.getElementById('hidden-receipt-container'); if(el) { try { const cvs = await html2canvas(el,{useCORS:true,scale:2,backgroundColor:'#FCF4E9'}); saveAs(cvs.toDataURL(), `${c.name}.png`); notify("圖片下載"); } catch(e){ notify("失敗"); } finally { setExportTargetCustomer(null); } } };
+            // === 修改後的文案複製功能 ===
+            const handleCopyOrderText = (c) => { 
+                if(!c) return; 
+                
+                let details = "";
+                c.items.forEach(i => {
+                    details += `${i.productName} ${i.variant} x${i.qty} $${i.customerTotalTWD}${i.isReleasing?' (釋出中)':''}\n`;
+                });
+
+                const t = `親愛的 ${c.name} 您好，
+您本次的連線扭蛋購物明細如下：
+${details}
+----------------
+消費總額：$${c.totalSpent.toLocaleString()}
+
+可以先幫我搭波卻可
+有誤的話～請趕快跟我說！
+
+₊⊹ 若是沒有漏掉的商品 ₊⊹
+就可以直接結帳囉！
+
+網址：（這裡留給我自己輸入網址）
+找到自己名字後完成下單就可以嚕
+𐙚 收到所有連結後請盡速完成付款
+    不要耽誤到最佳的賞味期限唷
+
+⚝ p.s. 前一次連線有開箱分享的朋友~
+下單後請幫我備註一下：開箱禮
+𝐭𝐡𝐚𝐧𝐤 𝐲𝐨𝐮 („• ֊ •„)੭`;
+
+                const ta = document.createElement("textarea"); 
+                ta.value = t; 
+                document.body.appendChild(ta); 
+                ta.select(); 
+                document.execCommand('copy'); 
+                document.body.removeChild(ta); 
+                notify("已複製通知文案"); 
+            };
+
+            const handleExportToImage = async (c) => { 
+                if(!c) return; 
+                setExportTargetCustomer(c); 
+                // 等待 React 渲染 DOM
+                await new Promise(r=>setTimeout(r,300)); 
+                const el = document.getElementById('hidden-receipt-container'); 
+                if(el) { 
+                    try { 
+                        const cvs = await html2canvas(el,{useCORS:true,scale:2,backgroundColor:'#FCF4E9'}); 
+                        saveAs(cvs.toDataURL(), `${c.name}.png`); 
+                        notify("圖片下載"); 
+                    } catch(e){ 
+                        notify("失敗"); 
+                    } finally { 
+                        setExportTargetCustomer(null); 
+                    } 
+                } 
+            };
+
+            // === 新增：批量圖片下載功能 (ZIP) ===
+            const handleBatchExportImages = async () => {
+                if(filteredCustomers.length === 0) return notify("無顧客資料");
+                if(isBatchExporting) return;
+
+                setIsBatchExporting(true);
+                const zip = new JSZip();
+                const folder = zip.folder("receipts");
+
+                try {
+                    for (let i = 0; i < filteredCustomers.length; i++) {
+                        const customer = filteredCustomers[i];
+                        setBatchProgress(`${i + 1} / ${filteredCustomers.length}`);
+                        
+                        // 1. 設定目標
+                        setExportTargetCustomer(customer);
+                        
+                        // 2. 等待 DOM 更新 (必須等待，否則會抓到上一個人的資料或空白)
+                        await new Promise(r => setTimeout(r, 400));
+                        
+                        // 3. 截圖
+                        const el = document.getElementById('hidden-receipt-container');
+                        if (el) {
+                            const canvas = await html2canvas(el, { useCORS: true, scale: 2, backgroundColor: '#FCF4E9' });
+                            const dataUrl = canvas.toDataURL('image/png');
+                            const imgData = dataUrl.replace(/^data:image\/(png|jpg);base64,/, "");
+                            folder.file(`${customer.name}.png`, imgData, { base64: true });
+                        }
+                    }
+
+                    setBatchProgress("打包中...");
+                    const content = await zip.generateAsync({ type: "blob" });
+                    saveAs(content, `Gasha_Receipts_${new Date().toISOString().slice(0,10)}.zip`);
+                    notify("批量下載完成！");
+
+                } catch (error) {
+                    console.error(error);
+                    notify("批量下載失敗");
+                } finally {
+                    setExportTargetCustomer(null);
+                    setIsBatchExporting(false);
+                    setBatchProgress('');
+                }
+            };
 
             return (
                 <div className="min-h-screen pb-24 relative">
@@ -497,7 +598,19 @@
                         {/* 3. Customers Tab */}
                         {activeTab === 'customers' && (
                             <div className="space-y-2 animate-in">
-                                <div className="flex justify-between items-center px-2 mb-2"><span className="text-xs font-bold text-latte-400">共 {filteredCustomers.length} 位顧客</span></div>
+                                <div className="flex justify-between items-center px-2 mb-2">
+                                    <span className="text-xs font-bold text-latte-400">共 {filteredCustomers.length} 位顧客</span>
+                                    
+                                    {/* === 新增：批量下載按鈕 === */}
+                                    <button 
+                                        onClick={handleBatchExportImages} 
+                                        disabled={isBatchExporting || filteredCustomers.length === 0}
+                                        className="text-xs bg-latte-600 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm active:scale-95 transition disabled:opacity-50"
+                                    >
+                                        {isBatchExporting ? <Loader2 size={12} className="animate-spin"/> : <FileArchive size={12}/>}
+                                        {isBatchExporting ? `打包中 ${batchProgress}` : '批量下載圖片'}
+                                    </button>
+                                </div>
                                 {filteredCustomers.map(c => (
                                     <div key={c.name} onClick={(e) => { e.stopPropagation(); setSelectedCustomerName(c.name); }} className="bg-white rounded-3xl p-5 shadow-soft border border-cream-200 flex justify-between items-center cursor-pointer mb-2 active:scale-[0.99] transition-all hover:border-latte-200">
                                         <div className="flex items-center gap-4"><div className="w-12 h-12 bg-cream-100 text-latte-600 rounded-full flex items-center justify-center font-bold border border-cream-200 text-lg shadow-sm">{c.name[0]}</div><div><h4 className="font-bold text-latte-800 text-lg">{c.name}</h4><p className="text-xs text-latte-400">{c.orderCount} 筆訂單</p></div></div>
@@ -767,7 +880,7 @@
                         </div>
                     )}
 
-                    {/* Hidden Receipt */}
+                    {/* Hidden Receipt (for Image Generation) */}
                     {exportTargetCustomer && (
                         <div id="hidden-receipt-container">
                             <div className="receipt-card">
