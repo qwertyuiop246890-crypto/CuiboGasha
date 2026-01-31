@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Cuibo Gasha WMS Pro v2.1</title>
+    <title>Cuibo Gasha WMS Pro v2.2</title>
     
     <!-- 1. 載入 Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -66,7 +66,7 @@
             User, ListOrdered, Tag, CheckSquare, Trash2, Edit, Save, 
             Image as ImageIcon, Download, Loader2, Coins, Circle, ShoppingCart, Settings,
             Cloud, Upload, FileJson, FileSpreadsheet, RefreshCcw, Minus, ArrowRightCircle, Megaphone, Undo2, History, Package, RotateCcw,
-            FileArchive
+            FileArchive, Square
         } from 'https://esm.sh/lucide-react@0.263.1?dev';
 
         const App = () => {
@@ -77,7 +77,12 @@
             const DEFAULT_API_URL = "https://script.google.com/macros/s/AKfycbzUzREPd7UAzndt6i4qN70nkd1ZUJWdzJa3DbQjN7yFZeJ2ne5Nj9f767-tMSaB7ayI/exec";
 
             // 2. 狀態
-            const loadLocal = (key, def) => { const s = localStorage.getItem(key); return s ? JSON.parse(s) : def; };
+            const loadLocal = (key, def) => { 
+                const s = localStorage.getItem(key); 
+                try {
+                    return s ? JSON.parse(s) : def; 
+                } catch(e) { return def; }
+            };
             const [orders, setOrders] = useState(() => loadLocal('cuibo_gasha_orders', []));
             const [priceTable, setPriceTable] = useState(() => {
                 const loaded = loadLocal('cuibo_gasha_pricetable', null);
@@ -86,8 +91,16 @@
             });
             const [apiUrl, setApiUrl] = useState(() => localStorage.getItem('cuibo_gasha_api_url') || DEFAULT_API_URL);
             
-            // 歷史紀錄
-            const [history, setHistory] = useState(() => loadLocal('cuibo_gasha_history', { machines: [], customers: [], variants: [] }));
+            // 歷史紀錄 (確保結構正確)
+            const [history, setHistory] = useState(() => {
+                const h = loadLocal('cuibo_gasha_history', { machines: [], customers: [], variants: [] });
+                // 簡易防呆，確保欄位存在
+                return {
+                    machines: Array.isArray(h.machines) ? h.machines : [],
+                    customers: Array.isArray(h.customers) ? h.customers : [],
+                    variants: Array.isArray(h.variants) ? h.variants : []
+                };
+            });
 
             const [currentMachine, setCurrentMachine] = useState({ name: '', priceJPY: 500, priceTWD: 170, variant: '' });
             const [inputCustomer, setInputCustomer] = useState('');
@@ -101,8 +114,9 @@
             
             // 匯出相關狀態
             const [exportTargetCustomer, setExportTargetCustomer] = useState(null);
-            const [isBatchExporting, setIsBatchExporting] = useState(false); // 新增：批量匯出狀態
-            const [batchProgress, setBatchProgress] = useState(''); // 新增：批量進度文字
+            const [isBatchExporting, setIsBatchExporting] = useState(false);
+            const [batchProgress, setBatchProgress] = useState('');
+            const [selectedForExport, setSelectedForExport] = useState(new Set()); // 新增：選取匯出名單
             
             const [isSyncing, setIsSyncing] = useState(false);
             
@@ -131,6 +145,11 @@
             useEffect(() => { localStorage.setItem('cuibo_gasha_api_url', apiUrl); }, [apiUrl]);
             useEffect(() => { localStorage.setItem('cuibo_gasha_history', JSON.stringify(history)); }, [history]);
 
+            // 當切換 Tab 或搜尋時，清空選取狀態 (避免誤操作，或者也可保留看需求)
+            useEffect(() => {
+                if(activeTab !== 'customers') setSelectedForExport(new Set());
+            }, [activeTab]);
+
             // 3. 邏輯計算
             const notify = (msg) => { setNotification(msg); setTimeout(() => setNotification(null), 3000); };
             const triggerConfirm = (title, message, onConfirm, type = 'info') => { setConfirmConfig({ title, message, onConfirm, type }); };
@@ -140,7 +159,8 @@
                 const val = value.trim();
                 setHistory(prev => {
                     const list = prev[type] || [];
-                    const newList = [val, ...list.filter(item => item !== val)].slice(100);
+                    // 確保過濾掉空值和重複，並保持最新在最前
+                    const newList = [val, ...list.filter(item => item && item !== val)].slice(0, 100); 
                     return { ...prev, [type]: newList };
                 });
             };
@@ -356,7 +376,6 @@
             };
             const handleResetPrice = () => { if(confirm("確定恢復預設價格表？")) { setPriceTable(DEFAULT_PRICE_TABLE); setShowPriceEditor(false); notify("已恢復預設"); } };
 
-            // === 修改後的文案複製功能 ===
             const handleCopyOrderText = (c) => { 
                 if(!c) return; 
                 
@@ -398,7 +417,6 @@ ${details}
             const handleExportToImage = async (c) => { 
                 if(!c) return; 
                 setExportTargetCustomer(c); 
-                // 等待 React 渲染 DOM
                 await new Promise(r=>setTimeout(r,300)); 
                 const el = document.getElementById('hidden-receipt-container'); 
                 if(el) { 
@@ -414,27 +432,45 @@ ${details}
                 } 
             };
 
-            // === 新增：批量圖片下載功能 (ZIP) ===
+            // === 批量匯出選取功能 ===
+            const toggleExportSelection = (name) => {
+                const newSet = new Set(selectedForExport);
+                if (newSet.has(name)) newSet.delete(name);
+                else newSet.add(name);
+                setSelectedForExport(newSet);
+            };
+
+            const toggleSelectAllExport = () => {
+                if (selectedForExport.size === filteredCustomers.length) {
+                    setSelectedForExport(new Set());
+                } else {
+                    setSelectedForExport(new Set(filteredCustomers.map(c => c.name)));
+                }
+            };
+
             const handleBatchExportImages = async () => {
                 if(filteredCustomers.length === 0) return notify("無顧客資料");
                 if(isBatchExporting) return;
+
+                // 決定要匯出的名單：如果有選取就只匯出選取的，否則匯出當前列表全部
+                const targets = selectedForExport.size > 0 
+                    ? filteredCustomers.filter(c => selectedForExport.has(c.name))
+                    : filteredCustomers;
+
+                if (targets.length === 0) return notify("未選取任何顧客");
 
                 setIsBatchExporting(true);
                 const zip = new JSZip();
                 const folder = zip.folder("receipts");
 
                 try {
-                    for (let i = 0; i < filteredCustomers.length; i++) {
-                        const customer = filteredCustomers[i];
-                        setBatchProgress(`${i + 1} / ${filteredCustomers.length}`);
+                    for (let i = 0; i < targets.length; i++) {
+                        const customer = targets[i];
+                        setBatchProgress(`${i + 1} / ${targets.length}`);
                         
-                        // 1. 設定目標
                         setExportTargetCustomer(customer);
-                        
-                        // 2. 等待 DOM 更新 (必須等待，否則會抓到上一個人的資料或空白)
                         await new Promise(r => setTimeout(r, 400));
                         
-                        // 3. 截圖
                         const el = document.getElementById('hidden-receipt-container');
                         if (el) {
                             const canvas = await html2canvas(el, { useCORS: true, scale: 2, backgroundColor: '#FCF4E9' });
@@ -448,6 +484,8 @@ ${details}
                     const content = await zip.generateAsync({ type: "blob" });
                     saveAs(content, `Gasha_Receipts_${new Date().toISOString().slice(0,10)}.zip`);
                     notify("批量下載完成！");
+                    // 匯出後清空選取
+                    setSelectedForExport(new Set());
 
                 } catch (error) {
                     console.error(error);
@@ -493,9 +531,10 @@ ${details}
                                             className="flex-1 bg-cream-50 rounded-xl py-3 px-4 font-bold text-lg outline-none focus:ring-2 ring-latte-300 text-latte-800"
                                             value={inputCustomer || ''}
                                             onChange={e => setInputCustomer(e.target.value)}
+                                            autoComplete="off"
                                         />
                                         <datalist id="hist-customers">
-                                            {history.customers.map(c => <option key={c} value={c}/>)}
+                                            {history.customers.map((c, i) => <option key={`${c}-${i}`} value={c}/>)}
                                         </datalist>
                                     </div>
                                 </div>
@@ -513,9 +552,10 @@ ${details}
                                         className="w-full text-lg font-bold border-b-2 border-cream-200 focus:border-latte-400 outline-none pb-2 mb-4 placeholder-latte-300 bg-transparent text-latte-800"
                                         value={currentMachine.name || ''}
                                         onChange={e => setCurrentMachine({...currentMachine, name: e.target.value})}
+                                        autoComplete="off"
                                     />
                                     <datalist id="hist-machines">
-                                        {history.machines.map(m => <option key={m} value={m}/>)}
+                                        {history.machines.map((m, i) => <option key={`${m}-${i}`} value={m}/>)}
                                     </datalist>
 
                                     <div className="grid grid-cols-4 gap-2 mb-4">
@@ -544,9 +584,10 @@ ${details}
                                             className="w-full text-sm bg-cream-50 rounded-xl p-3 outline-none text-latte-800"
                                             value={currentMachine.variant || ''}
                                             onChange={e => setCurrentMachine({...currentMachine, variant: e.target.value})}
+                                            autoComplete="off"
                                         />
                                         <datalist id="hist-variants">
-                                            {history.variants.map(v => <option key={v} value={v}/>)}
+                                            {history.variants.map((v, i) => <option key={`${v}-${i}`} value={v}/>)}
                                         </datalist>
                                     </div>
                                 </div>
@@ -595,28 +636,54 @@ ${details}
                             </div>
                         )}
 
-                        {/* 3. Customers Tab */}
+                        {/* 3. Customers Tab (Updated with Selection) */}
                         {activeTab === 'customers' && (
                             <div className="space-y-2 animate-in">
                                 <div className="flex justify-between items-center px-2 mb-2">
-                                    <span className="text-xs font-bold text-latte-400">共 {filteredCustomers.length} 位顧客</span>
+                                    <div className="flex items-center gap-3">
+                                        <button 
+                                            onClick={toggleSelectAllExport}
+                                            className="text-latte-400 hover:text-latte-600 active:scale-95 transition"
+                                        >
+                                            {filteredCustomers.length > 0 && selectedForExport.size === filteredCustomers.length ? <CheckSquare size={20}/> : <Square size={20}/>}
+                                        </button>
+                                        <span className="text-xs font-bold text-latte-400">共 {filteredCustomers.length} 位</span>
+                                    </div>
                                     
-                                    {/* === 新增：批量下載按鈕 === */}
                                     <button 
                                         onClick={handleBatchExportImages} 
                                         disabled={isBatchExporting || filteredCustomers.length === 0}
-                                        className="text-xs bg-latte-600 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm active:scale-95 transition disabled:opacity-50"
+                                        className={`text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm active:scale-95 transition disabled:opacity-50 font-bold ${selectedForExport.size > 0 ? 'bg-latte-600 text-white' : 'bg-white text-latte-600 border border-latte-200'}`}
                                     >
                                         {isBatchExporting ? <Loader2 size={12} className="animate-spin"/> : <FileArchive size={12}/>}
-                                        {isBatchExporting ? `打包中 ${batchProgress}` : '批量下載圖片'}
+                                        {isBatchExporting 
+                                            ? `打包中 ${batchProgress}` 
+                                            : selectedForExport.size > 0 
+                                                ? `匯出 ${selectedForExport.size} 位選取` 
+                                                : '匯出全部 (目前搜尋)'}
                                     </button>
                                 </div>
-                                {filteredCustomers.map(c => (
-                                    <div key={c.name} onClick={(e) => { e.stopPropagation(); setSelectedCustomerName(c.name); }} className="bg-white rounded-3xl p-5 shadow-soft border border-cream-200 flex justify-between items-center cursor-pointer mb-2 active:scale-[0.99] transition-all hover:border-latte-200">
-                                        <div className="flex items-center gap-4"><div className="w-12 h-12 bg-cream-100 text-latte-600 rounded-full flex items-center justify-center font-bold border border-cream-200 text-lg shadow-sm">{c.name[0]}</div><div><h4 className="font-bold text-latte-800 text-lg">{c.name}</h4><p className="text-xs text-latte-400">{c.orderCount} 筆訂單</p></div></div>
-                                        <div className="text-right"><p className="font-black text-latte-500 text-lg">${c.totalSpent.toLocaleString()}</p><div className="text-[10px] text-latte-300 bg-cream-50 px-2 py-0.5 rounded-lg inline-block">點擊查看</div></div>
-                                    </div>
-                                ))}
+                                {filteredCustomers.map(c => {
+                                    const isSelected = selectedForExport.has(c.name);
+                                    return (
+                                        <div key={c.name} onClick={(e) => { e.stopPropagation(); setSelectedCustomerName(c.name); }} className={`rounded-3xl p-5 shadow-soft border flex justify-between items-center cursor-pointer mb-2 active:scale-[0.99] transition-all relative ${isSelected ? 'bg-latte-50 border-latte-300' : 'bg-white border-cream-200 hover:border-latte-200'}`}>
+                                            
+                                            {/* Selection Checkbox Area */}
+                                            <div 
+                                                className="absolute left-0 top-0 bottom-0 w-12 flex items-center justify-center z-10"
+                                                onClick={(e) => { e.stopPropagation(); toggleExportSelection(c.name); }}
+                                            >
+                                                {isSelected ? <CheckSquare size={20} className="text-latte-600 fill-latte-50"/> : <Square size={20} className="text-cream-300"/>}
+                                            </div>
+
+                                            <div className="flex items-center gap-4 pl-8">
+                                                <div className="w-12 h-12 bg-cream-100 text-latte-600 rounded-full flex items-center justify-center font-bold border border-cream-200 text-lg shadow-sm">{c.name[0]}</div>
+                                                <div><h4 className="font-bold text-latte-800 text-lg">{c.name}</h4><p className="text-xs text-latte-400">{c.orderCount} 筆訂單</p></div>
+                                            </div>
+                                            <div className="text-right"><p className="font-black text-latte-500 text-lg">${c.totalSpent.toLocaleString()}</p><div className="text-[10px] text-latte-300 bg-cream-50 px-2 py-0.5 rounded-lg inline-block">點擊查看</div></div>
+                                        </div>
+                                    );
+                                })}
                             </div>
                         )}
 
@@ -679,7 +746,7 @@ ${details}
                                 <div className="p-4 pb-0"><div className="relative"><input type="text" placeholder="搜尋..." className="w-full bg-cream-50 border border-cream-200 p-2 pl-9 rounded-xl text-sm outline-none focus:border-latte-400 text-latte-800" value={dashboardSearchQuery || ''} onChange={e => setDashboardSearchQuery(e.target.value)}/><Search size={14} className="absolute left-3 top-2.5 text-latte-400"/></div></div>
                                 <div className="flex-1 overflow-y-auto p-4 space-y-3">
                                     {getDashboardDetailOrders().map(o => (
-                                         <div key={o.id} className="bg-white p-4 rounded-2xl border border-cream-200 shadow-sm flex justify-between items-center">
+                                          <div key={o.id} className="bg-white p-4 rounded-2xl border border-cream-200 shadow-sm flex justify-between items-center">
                                             <div>
                                                 <div className="font-bold text-latte-800">{o.productName} <span className="text-xs font-normal text-latte-400">({o.variant})</span></div>
                                                 <div className="text-xs text-latte-400 mt-1">{o.customer} · {o.qty} 個</div>
@@ -691,7 +758,7 @@ ${details}
                                             )}
                                          </div>
                                     ))}
-                                    {getDashboardDetailOrders().length === 0 && <div className="text-center text-latte-300 py-10">空空如也</div>}
+                                    {getDashboardDetailOrders().length === 0 && <div className="text-center text-latte-300 py-10">太棒了!都買完了!</div>}
                                 </div>
                             </div>
                         </div>
@@ -791,7 +858,7 @@ ${details}
                                 <div className="space-y-3">
                                     <div><p className="text-sm text-latte-500 mb-1">商品：<strong>{transferringOrder.productName}</strong></p><p className="text-xs text-latte-400">持有：{transferringOrder.qty} 個</p></div>
                                     <div className="bg-cream-50 p-3 rounded-xl border border-cream-200 flex justify-between items-center"><span className="text-sm font-bold text-latte-600">數量</span><div className="flex items-center gap-3"><button onClick={()=>setTransferQty(Math.max(1, transferQty-1))} className="w-8 h-8 rounded-full bg-white shadow flex items-center justify-center text-latte-400 active:scale-90" disabled={transferQty<=1}><Minus size={14}/></button><span className="text-lg font-black w-8 text-center text-latte-800">{transferQty}</span><button onClick={()=>setTransferQty(Math.min(transferringOrder.qty, transferQty+1))} className="w-8 h-8 rounded-full bg-latte-500 text-white shadow flex items-center justify-center active:scale-90" disabled={transferQty>=transferringOrder.qty}><Plus size={14}/></button></div></div>
-                                    <div><p className="text-sm text-latte-500 mb-2">對象：</p><input list="cl_trans" className="w-full bg-cream-50 border border-cream-200 p-3 rounded-xl outline-none font-bold text-latte-800" value={transferTarget || ''} onChange={e => setTransferTarget(e.target.value)} placeholder="輸入新顧客名稱" list="hist-customers"/><datalist id="cl_trans">{history.customers.map(c=><option key={c} value={c}/>)}</datalist></div>
+                                    <div><p className="text-sm text-latte-500 mb-2">對象：</p><input list="cl_trans" className="w-full bg-cream-50 border border-cream-200 p-3 rounded-xl outline-none font-bold text-latte-800" value={transferTarget || ''} onChange={e => setTransferTarget(e.target.value)} placeholder="輸入新顧客名稱" list="hist-customers" autoComplete="off"/><datalist id="cl_trans">{history.customers.map((c,i)=><option key={`${c}-${i}`} value={c}/>)}</datalist></div>
                                 </div>
                                 <button onClick={handleTransferOrder} disabled={!transferTarget} className="w-full bg-latte-600 text-white py-3.5 rounded-2xl font-bold shadow-lg active:scale-95 transition disabled:opacity-50">確認轉讓</button>
                             </div>
@@ -848,7 +915,13 @@ ${details}
                                             </div>
                                             <div>
                                                 <label className="text-xs font-bold text-latte-400 ml-1">機台名稱</label>
-                                                <input list="hist-machines" className="w-full bg-white border border-cream-200 p-3 rounded-xl outline-none focus:border-latte-400 font-bold text-latte-800" value={editingOrder.productName || ''} onChange={e=>setEditingOrder({...editingOrder, productName: e.target.value})}/>
+                                                <input 
+                                                    list="hist-machines" 
+                                                    className="w-full bg-white border border-cream-200 p-3 rounded-xl outline-none focus:border-latte-400 font-bold text-latte-800" 
+                                                    value={editingOrder.productName || ''} 
+                                                    onChange={e=>setEditingOrder({...editingOrder, productName: e.target.value})}
+                                                    autoComplete="off"
+                                                />
                                             </div>
                                             
                                             <label className="text-xs font-bold text-latte-400 ml-1">單價調整 (自動換算)</label>
@@ -878,7 +951,13 @@ ${details}
                                             <div className="flex gap-2">
                                                 <div className="flex-1">
                                                     <label className="text-xs font-bold text-latte-400 ml-1">款式</label>
-                                                    <input list="hist-variants" className="w-full bg-white border border-cream-200 p-3 rounded-xl outline-none focus:border-latte-400 font-bold text-latte-800" value={editingOrder.variant || ''} onChange={e=>setEditingOrder({...editingOrder, variant: e.target.value})}/>
+                                                    <input 
+                                                        list="hist-variants" 
+                                                        className="w-full bg-white border border-cream-200 p-3 rounded-xl outline-none focus:border-latte-400 font-bold text-latte-800" 
+                                                        value={editingOrder.variant || ''} 
+                                                        onChange={e=>setEditingOrder({...editingOrder, variant: e.target.value})}
+                                                        autoComplete="off"
+                                                    />
                                                 </div>
                                                 <div className="w-24">
                                                     <label className="text-xs font-bold text-latte-400 ml-1">數量</label>
@@ -925,4 +1004,3 @@ ${details}
     </script>
 </body>
 </html>
-
