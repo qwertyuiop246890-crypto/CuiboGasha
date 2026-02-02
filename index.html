@@ -5,18 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Cuibo Gasha WMS Pro v2.2</title>
     
-    <!-- 1. 載入 Tailwind CSS -->
+    <!-- 1. Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- 2. 載入 Babel 用於解析 JSX -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- 2. Load Babel for JSX (Pinned version to prevent target errors) -->
+    <script src="https://unpkg.com/@babel/standalone@7.23.9/babel.min.js"></script>
 
-    <!-- 3. 載入外部套件 -->
+    <!-- 3. Load External Libraries -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
 
-    <!-- 4. 設定自定義顏色 -->
+    <!-- 4. Configure Tailwind Theme -->
     <script>
         tailwind.config = {
             theme: {
@@ -38,7 +38,7 @@
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         
-        /* 隱藏的收據容器，雖然看不見但不能設為 display:none，否則 html2canvas 抓不到 */
+        /* Hidden receipt container - specific styling for html2canvas capture */
         #hidden-receipt-container { position: fixed; top: 0; left: -9999px; width: 500px; background-color: #FCF4E9; z-index: -100; padding: 40px; }
         .receipt-card { background: #fff; padding: 30px; border-radius: 20px; border: 1px solid #EBE0D6; }
         .receipt-header { text-align: center; border-bottom: 2px dashed #D3C5BC; padding-bottom: 20px; margin-bottom: 20px; }
@@ -57,7 +57,7 @@
 <body>
     <div id="root"></div>
 
-    <script type="text/babel" data-type="module">
+    <script type="text/babel" data-type="module" data-presets="react">
         import React, { useState, useMemo, useEffect, useRef } from 'https://esm.sh/react@18.2.0?dev';
         import { createRoot } from 'https://esm.sh/react-dom@18.2.0/client?dev';
         import { 
@@ -70,13 +70,13 @@
         } from 'https://esm.sh/lucide-react@0.263.1?dev';
 
         const App = () => {
-            // 1. 設定
+            // 1. Settings & Constants
             const DEFAULT_PRICE_TABLE = { 100: 50, 200: 80, 300: 120, 400: 140, 500: 170, 600: 190, 800: 260, 1000: 360, 1500: 450 };
             const ECO_FEE = 10; 
             const RELEASE_ZONE_NAME = "釋出區";
             const DEFAULT_API_URL = "https://script.google.com/macros/s/AKfycbzUzREPd7UAzndt6i4qN70nkd1ZUJWdzJa3DbQjN7yFZeJ2ne5Nj9f767-tMSaB7ayI/exec";
 
-            // 2. 狀態
+            // 2. State Management
             const loadLocal = (key, def) => { 
                 const s = localStorage.getItem(key); 
                 try {
@@ -91,10 +91,9 @@
             });
             const [apiUrl, setApiUrl] = useState(() => localStorage.getItem('cuibo_gasha_api_url') || DEFAULT_API_URL);
             
-            // 歷史紀錄 (確保結構正確)
+            // History (Ensuring structure)
             const [history, setHistory] = useState(() => {
                 const h = loadLocal('cuibo_gasha_history', { machines: [], customers: [], variants: [] });
-                // 簡易防呆，確保欄位存在
                 return {
                     machines: Array.isArray(h.machines) ? h.machines : [],
                     customers: Array.isArray(h.customers) ? h.customers : [],
@@ -112,11 +111,11 @@
             const [selectedCustomerName, setSelectedCustomerName] = useState(null); 
             const [notification, setNotification] = useState(null);
             
-            // 匯出相關狀態
+            // Export & Batch States
             const [exportTargetCustomer, setExportTargetCustomer] = useState(null);
             const [isBatchExporting, setIsBatchExporting] = useState(false);
             const [batchProgress, setBatchProgress] = useState('');
-            const [selectedForExport, setSelectedForExport] = useState(new Set()); // 新增：選取匯出名單
+            const [selectedForExport, setSelectedForExport] = useState(new Set());
             
             const [isSyncing, setIsSyncing] = useState(false);
             
@@ -140,17 +139,18 @@
             const [confirmConfig, setConfirmConfig] = useState(null);
             const fileInputRef = useRef(null);
 
+            // Persistence
             useEffect(() => { localStorage.setItem('cuibo_gasha_orders', JSON.stringify(orders)); }, [orders]);
             useEffect(() => { localStorage.setItem('cuibo_gasha_pricetable', JSON.stringify(priceTable)); }, [priceTable]);
             useEffect(() => { localStorage.setItem('cuibo_gasha_api_url', apiUrl); }, [apiUrl]);
             useEffect(() => { localStorage.setItem('cuibo_gasha_history', JSON.stringify(history)); }, [history]);
 
-            // 當切換 Tab 或搜尋時，清空選取狀態 (避免誤操作，或者也可保留看需求)
+            // Clear selection on tab change
             useEffect(() => {
                 if(activeTab !== 'customers') setSelectedForExport(new Set());
             }, [activeTab]);
 
-            // 3. 邏輯計算
+            // 3. Logic & Computed Values
             const notify = (msg) => { setNotification(msg); setTimeout(() => setNotification(null), 3000); };
             const triggerConfirm = (title, message, onConfirm, type = 'info') => { setConfirmConfig({ title, message, onConfirm, type }); };
 
@@ -159,7 +159,6 @@
                 const val = value.trim();
                 setHistory(prev => {
                     const list = prev[type] || [];
-                    // 確保過濾掉空值和重複，並保持最新在最前
                     const newList = [val, ...list.filter(item => item && item !== val)].slice(0, 100); 
                     return { ...prev, [type]: newList };
                 });
@@ -215,7 +214,7 @@
                 return [...new Set(list.map(o => o.customer))].sort();
             }, [orders, showDashboardDetail, dashboardSearchQuery]);
 
-            // 4. 操作 Handlers
+            // 4. Handlers
             const handlePriceSelect = (jpy) => setCurrentMachine(p => ({ ...p, priceJPY: jpy, priceTWD: priceTable[jpy] || 0 }));
             
             const addOrder = () => {
@@ -417,11 +416,11 @@ ${details}
             const handleExportToImage = async (c) => { 
                 if(!c) return; 
                 setExportTargetCustomer(c); 
-                await new Promise(r=>setTimeout(r,300)); 
+                await new Promise(r=>setTimeout(r,500)); 
                 const el = document.getElementById('hidden-receipt-container'); 
                 if(el) { 
                     try { 
-                        const cvs = await html2canvas(el,{useCORS:true,scale:2,backgroundColor:'#FCF4E9'}); 
+                        const cvs = await html2canvas(el,{useCORS:true,scale:2,backgroundColor:'#FCF4E9', logging: false}); 
                         saveAs(cvs.toDataURL(), `${c.name}.png`); 
                         notify("圖片下載"); 
                     } catch(e){ 
@@ -452,7 +451,6 @@ ${details}
                 if(filteredCustomers.length === 0) return notify("無顧客資料");
                 if(isBatchExporting) return;
 
-                // 決定要匯出的名單：如果有選取就只匯出選取的，否則匯出當前列表全部
                 const targets = selectedForExport.size > 0 
                     ? filteredCustomers.filter(c => selectedForExport.has(c.name))
                     : filteredCustomers;
@@ -469,11 +467,11 @@ ${details}
                         setBatchProgress(`${i + 1} / ${targets.length}`);
                         
                         setExportTargetCustomer(customer);
-                        await new Promise(r => setTimeout(r, 400));
+                        await new Promise(r => setTimeout(r, 500));
                         
                         const el = document.getElementById('hidden-receipt-container');
                         if (el) {
-                            const canvas = await html2canvas(el, { useCORS: true, scale: 2, backgroundColor: '#FCF4E9' });
+                            const canvas = await html2canvas(el, { useCORS: true, scale: 2, backgroundColor: '#FCF4E9', logging: false });
                             const dataUrl = canvas.toDataURL('image/png');
                             const imgData = dataUrl.replace(/^data:image\/(png|jpg);base64,/, "");
                             folder.file(`${customer.name}.png`, imgData, { base64: true });
@@ -484,7 +482,6 @@ ${details}
                     const content = await zip.generateAsync({ type: "blob" });
                     saveAs(content, `Gasha_Receipts_${new Date().toISOString().slice(0,10)}.zip`);
                     notify("批量下載完成！");
-                    // 匯出後清空選取
                     setSelectedForExport(new Set());
 
                 } catch (error) {
@@ -520,7 +517,7 @@ ${details}
                         {activeTab === 'input' && (
                             <div className="space-y-4 animate-in">
                                 
-                                {/* 1. 顧客名稱 */}
+                                {/* 1. Customer Input */}
                                 <div className="bg-white rounded-3xl p-5 shadow-lg border-2 border-latte-200">
                                     <div className="flex items-center gap-3">
                                         <div className="w-10 h-10 bg-cream-100 rounded-full flex items-center justify-center text-latte-400"><User size={20}/></div>
@@ -539,7 +536,7 @@ ${details}
                                     </div>
                                 </div>
 
-                                {/* 2. 機台設定 */}
+                                {/* 2. Machine Input */}
                                 <div className="bg-white rounded-3xl p-5 shadow-soft border border-cream-200">
                                     <div className="flex justify-between items-center mb-2">
                                         <div className="text-xs font-bold text-latte-400 tracking-wider flex items-center gap-1"><Tag size={12}/> 機台設定 (鎖定中)</div>
@@ -592,7 +589,7 @@ ${details}
                                     </div>
                                 </div>
 
-                                {/* 3. 加入清單 & 數量 */}
+                                {/* 3. Qty & Add */}
                                 <div className="bg-white rounded-3xl p-5 shadow-lg border-2 border-latte-200">
                                     <div className="flex items-center justify-between mb-6">
                                         <div className="flex items-center gap-3 bg-cream-50 rounded-full p-1 border border-cream-200">
@@ -636,7 +633,7 @@ ${details}
                             </div>
                         )}
 
-                        {/* 3. Customers Tab (Updated with Selection) */}
+                        {/* 3. Customers Tab */}
                         {activeTab === 'customers' && (
                             <div className="space-y-2 animate-in">
                                 <div className="flex justify-between items-center px-2 mb-2">
@@ -690,28 +687,24 @@ ${details}
                         {/* 4. Dashboard Tab */}
                         {activeTab === 'dashboard' && (
                             <div className="grid grid-cols-3 gap-3 animate-in">
-                                {/* JPY Total */}
                                 <div className="bg-[#D98E73] text-white p-4 rounded-2xl shadow-lg relative overflow-hidden flex flex-col justify-center items-center text-center">
                                     <div className="opacity-10 absolute"><Coins size={60}/></div>
                                     <p className="text-[10px] font-bold opacity-90 tracking-wider">日幣總投</p>
                                     <p className="text-xl font-black mt-1">¥{stats.totalJPY.toLocaleString()}</p>
                                 </div>
 
-                                {/* Revenue */}
                                 <div className="bg-[#BF9E85] text-white p-4 rounded-2xl shadow-lg relative overflow-hidden flex flex-col justify-center items-center text-center">
                                     <div className="opacity-10 absolute"><DollarSign size={60}/></div>
                                     <p className="text-[10px] font-bold opacity-90 tracking-wider">預估營收</p>
                                     <p className="text-xl font-black mt-1">${stats.totalRevenue.toLocaleString()}</p>
                                 </div>
 
-                                {/* Total Count */}
                                 <div className="bg-[#8C7A6B] text-white p-4 rounded-2xl shadow-lg relative overflow-hidden flex flex-col justify-center items-center text-center">
                                     <div className="opacity-10 absolute"><Package size={60}/></div>
                                     <p className="text-[10px] font-bold opacity-90 tracking-wider">總顆數</p>
                                     <p className="text-xl font-black mt-1">{stats.totalCount}</p>
                                 </div>
 
-                                {/* Status Buttons */}
                                 <div className="col-span-3 bg-white p-4 rounded-3xl border border-cream-200 shadow-sm flex justify-around text-center gap-1">
                                     <button onClick={() => { setShowDashboardDetail('purchase'); setDashboardSearchQuery(''); }} className="flex-1 hover:bg-cream-50 rounded-xl transition p-2"><div className="text-3xl font-black text-latte-400">{stats.pendingPurchase}</div><div className="text-xs text-latte-300 font-bold mt-1">待核對</div></button>
                                     <div className="w-px bg-cream-200"></div>
@@ -876,7 +869,7 @@ ${details}
                         </div>
                     )}
 
-                    {/* Order Edit Modal (訂單編輯視窗 - 含釋出區保護) */}
+                    {/* Order Edit Modal */}
                     {editingOrder && (
                         <div className="fixed inset-0 z-[250] flex items-center justify-center p-4 bg-latte-900/40 backdrop-blur-sm animate-in">
                             <div className="bg-white rounded-[30px] w-full max-w-sm p-6 shadow-2xl space-y-4 flex flex-col">
@@ -898,7 +891,7 @@ ${details}
                                         <button 
                                             onClick={() => {
                                                 setTransferringOrder(editingOrder);
-                                                setTransferQty(editingOrder.qty); // Default to full qty
+                                                setTransferQty(editingOrder.qty); 
                                                 setEditingOrder(null);
                                             }}
                                             className="w-full bg-latte-600 text-white py-3.5 rounded-2xl font-bold shadow-lg shadow-latte-600/20 active:scale-95 transition flex items-center justify-center gap-2"
@@ -1004,3 +997,5 @@ ${details}
     </script>
 </body>
 </html>
+
+
