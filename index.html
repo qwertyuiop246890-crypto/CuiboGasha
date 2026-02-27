@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Cuibo Gasha WMS Pro v2.3</title>
+    <title>Cuibo Gasha WMS Pro v2.4</title>
     
     <!-- 1. Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -93,11 +93,13 @@
             
             // History (Ensuring structure)
             const [history, setHistory] = useState(() => {
-                const h = loadLocal('cuibo_gasha_history', { machines: [], customers: [], variants: [] });
+                const h = loadLocal('cuibo_gasha_history', { machines: [], customers: [], variants: [], machineVariants: {} });
                 return {
                     machines: Array.isArray(h.machines) ? h.machines : [],
                     customers: Array.isArray(h.customers) ? h.customers : [],
-                    variants: Array.isArray(h.variants) ? h.variants : []
+                    variants: Array.isArray(h.variants) ? h.variants : [],
+                    // 新增屬性：紀錄機台對應的款式歷史 { "機台A": ["款式1", "款式2"] }
+                    machineVariants: h.machineVariants || {}
                 };
             });
 
@@ -164,6 +166,34 @@
                 });
             };
 
+            // === [新增] 動態過濾款式邏輯 (主介面加單使用) ===
+            const availableVariants = useMemo(() => {
+                const mName = currentMachine.name.trim();
+                if (!mName) return history.variants; // 若未輸入機台，退回顯示全部款式
+
+                // 1. 從歷史映射表中取出該機台曾輸入過的款式
+                const historyMapVars = history.machineVariants?.[mName] || [];
+                // 2. 爬取目前活著的訂單中，該機台被選用的款式
+                const orderVars = orders.filter(o => o.productName === mName).map(o => o.variant);
+                
+                // 合併並去重複
+                const combined = [...new Set([...historyMapVars, ...orderVars])];
+                
+                // 如果該機台確實有專屬的款式紀錄就顯示專屬的，如果完全沒有，則顯示全域紀錄作為備用選項
+                return combined.length > 0 ? combined : history.variants;
+            }, [currentMachine.name, history, orders]);
+
+            // === [新增] 動態過濾款式邏輯 (編輯彈窗使用) ===
+            const editAvailableVariants = useMemo(() => {
+                if (!editingOrder || !editingOrder.productName) return history.variants;
+                const mName = editingOrder.productName.trim();
+                const historyMapVars = history.machineVariants?.[mName] || [];
+                const orderVars = orders.filter(o => o.productName === mName).map(o => o.variant);
+                const combined = [...new Set([...historyMapVars, ...orderVars])];
+                return combined.length > 0 ? combined : history.variants;
+            }, [editingOrder?.productName, history, orders]);
+
+
             const customerList = useMemo(() => {
                 const map = {};
                 orders.forEach(o => {
@@ -226,13 +256,25 @@
                 const unitPriceTWD = currentMachine.priceTWD;
                 const ecoTotal = isEco ? (ECO_FEE * inputQty) : 0;
                 
-                updateHistory('machines', currentMachine.name);
+                const machineName = currentMachine.name.trim();
+                const variantName = currentMachine.variant.trim();
+
+                updateHistory('machines', machineName);
                 updateHistory('customers', inputCustomer);
-                updateHistory('variants', currentMachine.variant);
+                updateHistory('variants', variantName); // 仍保留全域寫入，以防萬一
+
+                // === [新增] 將「機台名稱」與「款式」的對應關係寫入 ===
+                setHistory(prev => {
+                    const mv = prev.machineVariants || {};
+                    const list = mv[machineName] || [];
+                    // 將新填寫的款式加入該機台的專屬清單中，最多保留 50 筆
+                    const newList = [variantName, ...list.filter(x => x !== variantName)].slice(0, 50);
+                    return { ...prev, machineVariants: { ...mv, [machineName]: newList } };
+                });
 
                 const newOrder = {
                     id: Date.now(), date: new Date().toISOString().split('T')[0],
-                    customer: inputCustomer.trim(), productName: currentMachine.name, variant: currentMachine.variant.trim(), qty: inputQty,
+                    customer: inputCustomer.trim(), productName: machineName, variant: variantName, qty: inputQty,
                     unitPriceJPY: currentMachine.priceJPY, unitPriceTWD: unitPriceTWD,
                     ecoFeePerUnit: isEco ? ECO_FEE : 0, ecoFeeTotal: ecoTotal,
                     gashaTotalJPY: currentMachine.priceJPY * inputQty, gashaTotalTWD: unitPriceTWD * inputQty, customerTotalTWD: (unitPriceTWD * inputQty) + ecoTotal,
@@ -268,7 +310,6 @@
                 setCurrentMachine(prev => ({ ...prev, name: '', variant: '' }));
                 setInputQty(1); setIsEco(false);
             };
-
 
             const toggleStatus = (id, field) => setOrders(p => p.map(o => o.id === id ? { ...o, [field]: !o[field] } : o));
             const deleteOrder = (id) => triggerConfirm('刪除', '確定刪除此訂單？', () => { setOrders(p => p.filter(o => o.id !== id)); notify("已刪除"); }, 'danger');
@@ -350,21 +391,33 @@
 
             const handleClearHistory = () => {
                 triggerConfirm('清除歷史', '確定清除所有自動完成的歷史紀錄？', () => {
-                    setHistory({ machines: [], customers: [], variants: [] });
+                    // 同時清空 machineVariants
+                    setHistory({ machines: [], customers: [], variants: [], machineVariants: {} });
                     notify("歷史紀錄已清空");
                 }, 'danger');
             };
 
             const handleExportBackup = () => { saveAs(new Blob([JSON.stringify({ orders, priceTable, history, timestamp: new Date().toISOString() }, null, 2)], { type: "application/json" }), `CuiboGasha_Backup_${new Date().toISOString().slice(0,10)}.json`); notify("下載成功"); };
-            const handleImportBackup = (e) => { const f = e.target.files[0]; if(!f)return; const r = new FileReader(); r.onload=(ev)=>{ try{ const d=JSON.parse(ev.target.result); if(d.orders) triggerConfirm('還原', `時間: ${d.timestamp}`, ()=>{ setOrders(d.orders); if(d.priceTable) setPriceTable(d.priceTable); if(d.history) setHistory(d.history); notify("成功"); setShowGlobalSettings(false); }, 'danger'); }catch(x){notify("錯誤");} e.target.value=''; }; r.readAsText(f); };
+            const handleImportBackup = (e) => { const f = e.target.files[0]; if(!f)return; const r = new FileReader(); r.onload=(ev)=>{ try{ const d=JSON.parse(ev.target.result); if(d.orders) triggerConfirm('還原', `時間: ${d.timestamp}`, ()=>{ setOrders(d.orders); if(d.priceTable) setPriceTable(d.priceTable); if(d.history) setHistory({ machines: d.history.machines||[], customers: d.history.customers||[], variants: d.history.variants||[], machineVariants: d.history.machineVariants||{} }); notify("成功"); setShowGlobalSettings(false); }, 'danger'); }catch(x){notify("錯誤");} e.target.value=''; }; r.readAsText(f); };
             const handleExportCSV = () => { const bom="\uFEFF"; const h="日期,顧客,機台,款式,數量,單價(台),總額,核對,入袋,釋出中\n"; const r=orders.map(o=>`${o.date},${o.customer},${o.productName},${o.variant},${o.qty},${o.unitPriceTWD},${o.customerTotalTWD},${o.isPurchased?'V':'X'},${o.isPicked?'V':'X'},${o.isReleasing?'Y':''}`).join("\n"); saveAs(new Blob([bom+h+r],{type:"text/csv"}),"Export.csv"); notify("CSV下載"); };
             const handleCloudUpload = async () => { if(!apiUrl)return notify("無API"); setIsSyncing(true); try{ await fetch(apiUrl,{method:'POST',body:JSON.stringify({orders,priceTable,history,timestamp:new Date().toISOString()})}); notify("備份成功"); }catch(e){notify("失敗");}finally{setIsSyncing(false);} };
-            const handleCloudDownload = async () => { if(!apiUrl)return notify("無API"); setIsSyncing(true); try{ const r=await fetch(apiUrl); const d=await r.json(); if(d.orders) triggerConfirm('同步',`時間:${d.timestamp}`,()=>{setOrders(d.orders);if(d.priceTable)setPriceTable(d.priceTable);if(d.history)setHistory(d.history);notify("成功");setShowGlobalSettings(false);},'danger'); }catch(e){notify("失敗");}finally{setIsSyncing(false);} };
+            const handleCloudDownload = async () => { if(!apiUrl)return notify("無API"); setIsSyncing(true); try{ const r=await fetch(apiUrl); const d=await r.json(); if(d.orders) triggerConfirm('同步',`時間:${d.timestamp}`,()=>{setOrders(d.orders);if(d.priceTable)setPriceTable(d.priceTable);if(d.history)setHistory({ machines: d.history.machines||[], customers: d.history.customers||[], variants: d.history.variants||[], machineVariants: d.history.machineVariants||{} });notify("成功");setShowGlobalSettings(false);},'danger'); }catch(e){notify("失敗");}finally{setIsSyncing(false);} };
             
             const handleSaveEditedOrder = () => { 
                 if(!editingOrder) return;
-                if(!editingOrder.productName.trim()) return notify("機台名稱不可為空");
-                if(!editingOrder.variant.trim()) return notify("款式不可為空");
+                const mName = editingOrder.productName.trim();
+                const vName = editingOrder.variant.trim();
+                
+                if(!mName) return notify("機台名稱不可為空");
+                if(!vName) return notify("款式不可為空");
+
+                // 編輯時若輸入新的款式，也幫忙記錄進去
+                setHistory(prev => {
+                    const mv = prev.machineVariants || {};
+                    const list = mv[mName] || [];
+                    const newList = [vName, ...list.filter(x => x !== vName)].slice(0, 50);
+                    return { ...prev, machineVariants: { ...mv, [mName]: newList } };
+                });
 
                 const eco=editingOrder.ecoFeePerUnit*editingOrder.qty; 
                 setOrders(p=>p.map(o=>o.id===editingOrder.id?{...editingOrder,ecoFeeTotal:eco,customerTotalTWD:(editingOrder.unitPriceTWD*editingOrder.qty)+eco,gashaTotalJPY:editingOrder.unitPriceJPY*editingOrder.qty,gashaTotalTWD:editingOrder.unitPriceTWD*editingOrder.qty}:o)); 
@@ -402,7 +455,6 @@
                 notify("價格已更新"); 
             };
             const handleResetPrice = () => {
-                // Bug 修復：將原本的原生 confirm 替換為我們自建的 Modal triggerConfirm
                 triggerConfirm('恢復預設', '確定恢復預設價格表？', () => { 
                     setPriceTable(DEFAULT_PRICE_TABLE); 
                     setShowPriceEditor(false); 
@@ -619,7 +671,8 @@ ${details}
                                             autoComplete="off"
                                         />
                                         <datalist id="hist-variants">
-                                            {history.variants.map((v, i) => <option key={`${v}-${i}`} value={v}/>)}
+                                            {/* 動態綁定：只顯示對應機台的款式 */}
+                                            {availableVariants.map((v, i) => <option key={`${v}-${i}`} value={v}/>)}
                                         </datalist>
                                     </div>
                                 </div>
@@ -1000,12 +1053,15 @@ ${details}
                                                 <div className="flex-1">
                                                     <label className="text-xs font-bold text-latte-400 ml-1">款式</label>
                                                     <input 
-                                                        list="hist-variants" 
+                                                        list="edit-hist-variants" 
                                                         className="w-full bg-white border border-cream-200 p-3 rounded-xl outline-none focus:border-latte-400 font-bold text-latte-800" 
                                                         value={editingOrder.variant || ''} 
                                                         onChange={e=>setEditingOrder({...editingOrder, variant: e.target.value})}
                                                         autoComplete="off"
                                                     />
+                                                    <datalist id="edit-hist-variants">
+                                                        {editAvailableVariants.map((v, i) => <option key={`${v}-${i}`} value={v}/>)}
+                                                    </datalist>
                                                 </div>
                                                 <div className="w-24">
                                                     <label className="text-xs font-bold text-latte-400 ml-1">數量</label>
