@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Cuibo Gasha WMS Pro v2.2</title>
+    <title>Cuibo Gasha WMS Pro v2.3</title>
     
     <!-- 1. Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -217,10 +217,11 @@
             // 4. Handlers
             const handlePriceSelect = (jpy) => setCurrentMachine(p => ({ ...p, priceJPY: jpy, priceTWD: priceTable[jpy] || 0 }));
             
-            const addOrder = () => {
-                if (!inputCustomer.trim()) return notify("請輸入顧客名稱");
-                if (!currentMachine.name.trim()) return notify("請輸入機台名稱");
-                if (!currentMachine.variant.trim()) return notify("請輸入款式");
+            // Base Add Order Logic
+            const processAddOrder = () => {
+                if (!inputCustomer.trim()) { notify("請輸入顧客名稱"); return false; }
+                if (!currentMachine.name.trim()) { notify("請輸入機台名稱"); return false; }
+                if (!currentMachine.variant.trim()) { notify("請輸入款式"); return false; }
 
                 const unitPriceTWD = currentMachine.priceTWD;
                 const ecoTotal = isEco ? (ECO_FEE * inputQty) : 0;
@@ -238,8 +239,36 @@
                     isPurchased: false, isPicked: false, isReleasing: false
                 };
                 setOrders(p => [newOrder, ...p]);
-                setInputCustomer(''); setInputQty(1); notify(`已加入: ${newOrder.customer}`);
+                notify(`已加入: ${newOrder.customer}`);
+                return true;
             };
+
+            // Four Specific Add Order Actions
+            const handleAddSameCustomer = () => {
+                if (!processAddOrder()) return;
+                setCurrentMachine(prev => ({ ...prev, name: '', variant: '' }));
+                setInputQty(1); setIsEco(false);
+            };
+
+            const handleAddSameProduct = () => {
+                if (!processAddOrder()) return;
+                setInputCustomer('');
+                setCurrentMachine(prev => ({ ...prev, variant: '' })); 
+                setInputQty(1); setIsEco(false);
+            };
+
+            const handleAddSameBoth = () => {
+                if (!processAddOrder()) return;
+                setInputQty(1); setIsEco(false);
+            };
+
+            const handleAddNew = () => {
+                if (!processAddOrder()) return;
+                setInputCustomer('');
+                setCurrentMachine(prev => ({ ...prev, name: '', variant: '' }));
+                setInputQty(1); setIsEco(false);
+            };
+
 
             const toggleStatus = (id, field) => setOrders(p => p.map(o => o.id === id ? { ...o, [field]: !o[field] } : o));
             const deleteOrder = (id) => triggerConfirm('刪除', '確定刪除此訂單？', () => { setOrders(p => p.filter(o => o.id !== id)); notify("已刪除"); }, 'danger');
@@ -362,7 +391,6 @@
             };
             const addPriceRow = () => setEditingPrices(prev => [...prev, { id: Date.now(), j: '', t: '' }]);
             const removePriceRow = (id) => setEditingPrices(prev => prev.filter(p => p.id !== id));
-            const updatePriceRow = (id, field, val) => setEditingPrices(prev => prev.map(p => p.id === id ? { ...p, [field]: val === '' ? '' : parseInt(val) } : p));
             
             const savePriceEditor = () => { 
                 const t = {}; 
@@ -373,7 +401,14 @@
                 setShowPriceEditor(false); 
                 notify("價格已更新"); 
             };
-            const handleResetPrice = () => { if(confirm("確定恢復預設價格表？")) { setPriceTable(DEFAULT_PRICE_TABLE); setShowPriceEditor(false); notify("已恢復預設"); } };
+            const handleResetPrice = () => {
+                // Bug 修復：將原本的原生 confirm 替換為我們自建的 Modal triggerConfirm
+                triggerConfirm('恢復預設', '確定恢復預設價格表？', () => { 
+                    setPriceTable(DEFAULT_PRICE_TABLE); 
+                    setShowPriceEditor(false); 
+                    notify("已恢復預設"); 
+                }, 'danger'); 
+            };
 
             const handleCopyOrderText = (c) => { 
                 if(!c) return; 
@@ -539,7 +574,7 @@ ${details}
                                 {/* 2. Machine Input */}
                                 <div className="bg-white rounded-3xl p-5 shadow-soft border border-cream-200">
                                     <div className="flex justify-between items-center mb-2">
-                                        <div className="text-xs font-bold text-latte-400 tracking-wider flex items-center gap-1"><Tag size={12}/> 機台設定 (鎖定中)</div>
+                                        <div className="text-xs font-bold text-latte-400 tracking-wider flex items-center gap-1"><Tag size={12}/> 機台設定</div>
                                         <button onClick={openPriceEditor} className="text-[10px] text-latte-500 bg-cream-100 px-2 py-1 rounded border border-cream-200 flex items-center gap-1 hover:bg-cream-200 active:scale-95 transition"><Edit size={10}/> 編輯價格</button>
                                     </div>
                                     <input 
@@ -589,9 +624,9 @@ ${details}
                                     </div>
                                 </div>
 
-                                {/* 3. Qty & Add */}
+                                {/* 3. Qty & Add Grid */}
                                 <div className="bg-white rounded-3xl p-5 shadow-lg border-2 border-latte-200">
-                                    <div className="flex items-center justify-between mb-6">
+                                    <div className="flex items-center justify-between mb-4 border-b border-cream-200 pb-4">
                                         <div className="flex items-center gap-3 bg-cream-50 rounded-full p-1 border border-cream-200">
                                             <button onClick={() => setInputQty(Math.max(1, inputQty-1))} className="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center text-latte-400 active:scale-90 transition"><Minus size={18}/></button>
                                             <span className="text-xl font-black w-8 text-center text-latte-800">{inputQty}</span>
@@ -605,12 +640,32 @@ ${details}
                                             <span className="font-bold text-sm">+{isEco ? `$${ECO_FEE*inputQty}` : '$0'}</span>
                                         </button>
                                     </div>
-                                    <button onClick={addOrder} className="w-full bg-latte-800 text-cream-50 py-4 rounded-2xl font-bold text-lg shadow-lg shadow-latte-800/20 active:scale-98 transition flex items-center justify-center gap-2 hover:brightness-110">
-                                        <span>加入清單</span>
-                                        <span className="bg-white/20 px-2 py-0.5 rounded text-sm">
-                                            ${(currentMachine.priceTWD * inputQty) + (isEco ? ECO_FEE * inputQty : 0)}
+                                    
+                                    {/* 4 Custom Add Action Buttons */}
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <button onClick={handleAddSameCustomer} className="bg-[#DB9079] text-white py-4 px-2 rounded-2xl flex flex-col items-center justify-center shadow-md active:scale-95 transition">
+                                            <span className="font-bold text-lg mb-1">同客續加</span>
+                                            <span className="text-[11px] opacity-90">(清商品/留顧客)</span>
+                                        </button>
+                                        <button onClick={handleAddSameProduct} className="bg-[#C2A590] text-white py-4 px-2 rounded-2xl flex flex-col items-center justify-center shadow-md active:scale-95 transition">
+                                            <span className="font-bold text-lg mb-1">同品換客</span>
+                                            <span className="text-[11px] opacity-90">(留商品/清顧客)</span>
+                                        </button>
+                                        <button onClick={handleAddSameBoth} className="bg-[#A3AC99] text-white py-4 px-2 rounded-2xl flex flex-col items-center justify-center shadow-md active:scale-95 transition">
+                                            <span className="font-bold text-lg mb-1">同品同客</span>
+                                            <span className="text-[11px] opacity-90">(全留/方便換款)</span>
+                                        </button>
+                                        <button onClick={handleAddNew} className="bg-[#BAAB9F] text-white py-4 px-2 rounded-2xl flex flex-col items-center justify-center shadow-md active:scale-95 transition border-2 border-[#4A3B32]">
+                                            <span className="font-bold text-lg mb-1">全新加單</span>
+                                            <span className="text-[11px] font-bold opacity-90">(清空全部/不關閉)</span>
+                                        </button>
+                                    </div>
+                                    
+                                    <div className="text-center mt-4">
+                                        <span className="text-sm font-bold text-latte-500 bg-cream-50 px-3 py-1 rounded-lg border border-cream-200">
+                                            當前小計: ${(currentMachine.priceTWD * inputQty) + (isEco ? ECO_FEE * inputQty : 0)}
                                         </span>
-                                    </button>
+                                    </div>
                                 </div>
                                 {orders.length > 0 && <div className="text-center text-xs text-latte-400 opacity-70">剛加入: {orders[0].customer} - {orders[0].productName} (${orders[0].customerTotalTWD})</div>}
                             </div>
@@ -858,7 +913,7 @@ ${details}
                         </div>
                     )}
 
-                    {/* App Confirm */}
+                    {/* App Confirm (Replace Native Alerts) */}
                     {confirmConfig && (
                         <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-latte-900/40 backdrop-blur-sm animate-in">
                             <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl space-y-4 border border-cream-200">
@@ -997,5 +1052,3 @@ ${details}
     </script>
 </body>
 </html>
-
-
