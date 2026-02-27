@@ -66,7 +66,7 @@
             User, ListOrdered, Tag, CheckSquare, Trash2, Edit, Save, 
             Image as ImageIcon, Download, Loader2, Coins, Circle, ShoppingCart, Settings,
             Cloud, Upload, FileJson, FileSpreadsheet, RefreshCcw, Minus, ArrowRightCircle, Megaphone, Undo2, History, Package, RotateCcw,
-            FileArchive, Square
+            FileArchive, Square, Clock, Calendar
         } from 'https://esm.sh/lucide-react@0.263.1?dev';
 
         const App = () => {
@@ -142,6 +142,9 @@
 
             const [confirmConfig, setConfirmConfig] = useState(null);
             const fileInputRef = useRef(null);
+
+            // === [新增] 日期區間篩選狀態 ===
+            const [dateRange, setDateRange] = useState({ start: '', end: '' });
 
             // Persistence
             useEffect(() => { localStorage.setItem('cuibo_gasha_orders', JSON.stringify(orders)); }, [orders]);
@@ -227,14 +230,34 @@
 
             const filteredOrders = orders.filter(o => o.customer.includes(searchQuery) || o.productName.includes(searchQuery) || (o.variant && o.variant.includes(searchQuery)));
 
+            // === [新增] 儀表板專用：依據日期區間篩選訂單 ===
+            const dashboardOrders = useMemo(() => {
+                return orders.filter(o => {
+                    if (dateRange.start && o.date < dateRange.start) return false;
+                    if (dateRange.end && o.date > dateRange.end) return false;
+                    return true;
+                });
+            }, [orders, dateRange]);
+
+            // === [更新] 儀表板專用：依據篩選後的訂單計算統計數據 ===
+            const dashboardStats = useMemo(() => {
+                const totalRevenue = dashboardOrders.reduce((acc, o) => acc + o.customerTotalTWD, 0);
+                const totalJPY = dashboardOrders.reduce((acc, o) => acc + o.gashaTotalJPY, 0);
+                const totalCount = dashboardOrders.reduce((acc, o) => acc + o.qty, 0);
+                const pendingPurchase = dashboardOrders.filter(o => !o.isPurchased && !o.isReleasing).reduce((acc, o) => acc + o.qty, 0);
+                const pendingPick = dashboardOrders.filter(o => o.isPurchased && !o.isPicked && !o.isReleasing).reduce((acc, o) => acc + o.qty, 0);
+                const releasingCount = dashboardOrders.filter(o => o.isReleasing).reduce((acc, o) => acc + o.qty, 0);
+                return { totalRevenue, totalJPY, totalCount, pendingPurchase, pendingPick, releasingCount };
+            }, [dashboardOrders]);
+
             const getDashboardDetailOrders = () => {
                 let list = [];
                 if (showDashboardDetail === 'purchase') {
-                    list = orders.filter(o => !o.isPurchased && !o.isReleasing);
+                    list = dashboardOrders.filter(o => !o.isPurchased && !o.isReleasing);
                 } else if (showDashboardDetail === 'pick') {
-                    list = orders.filter(o => o.isPurchased && !o.isPicked && !o.isReleasing);
+                    list = dashboardOrders.filter(o => o.isPurchased && !o.isPicked && !o.isReleasing);
                 } else if (showDashboardDetail === 'releasing') {
-                    list = orders.filter(o => o.isReleasing);
+                    list = dashboardOrders.filter(o => o.isReleasing);
                 }
                 
                 if (dashboardSearchQuery) list = list.filter(o => o.customer.includes(dashboardSearchQuery) || o.productName.includes(dashboardSearchQuery));
@@ -309,8 +332,15 @@
                     };
                 });
 
+                const now = new Date();
+                const yy = now.getFullYear();
+                const mm = String(now.getMonth() + 1).padStart(2, '0');
+                const dd = String(now.getDate()).padStart(2, '0');
+
                 const newOrder = {
-                    id: Date.now(), date: new Date().toISOString().split('T')[0],
+                    id: Date.now(), 
+                    date: `${yy}-${mm}-${dd}`,
+                    time: now.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute: '2-digit' }),
                     customer: inputCustomer.trim(), productName: machineName, variant: variantName, qty: inputQty,
                     unitPriceJPY: currentMachine.priceJPY, unitPriceTWD: unitPriceTWD,
                     ecoFeePerUnit: isEco ? ECO_FEE : 0, ecoFeeTotal: ecoTotal,
@@ -773,7 +803,12 @@ ${details}
                                 {filteredOrders.map(o => (
                                     <div key={o.id} onClick={() => setEditingOrder(o)} className={`bg-white p-4 rounded-3xl shadow-soft border border-cream-200 transition-all cursor-pointer hover:border-latte-300 active:scale-[0.99] ${o.isPicked ? 'opacity-60 bg-cream-50' : ''}`}>
                                         <div className="flex justify-between items-start mb-3">
-                                            <div><div className="font-bold text-latte-800 text-lg">{o.customer}</div><div className="text-xs text-latte-500 font-bold">{o.productName} <span className="text-latte-300 font-normal">({o.variant})</span></div><div className="mt-1 text-xs bg-cream-100 inline-block px-2 py-0.5 rounded text-latte-600 font-bold border border-cream-200">¥{o.unitPriceJPY} x {o.qty}{o.ecoFeeTotal > 0 && <span className="text-emerald-600 ml-1">+環保</span>}</div></div>
+                                            <div>
+                                                <div className="font-bold text-latte-800 text-lg">{o.customer}</div>
+                                                <div className="text-xs text-latte-500 font-bold">{o.productName} <span className="text-latte-300 font-normal">({o.variant})</span></div>
+                                                <div className="mt-1 text-[10px] text-latte-400 flex items-center gap-1 font-medium"><Clock size={12}/> {o.date} {o.time || ''}</div>
+                                                <div className="mt-1 text-xs bg-cream-100 inline-block px-2 py-0.5 rounded text-latte-600 font-bold border border-cream-200">¥{o.unitPriceJPY} x {o.qty}{o.ecoFeeTotal > 0 && <span className="text-emerald-600 ml-1">+環保</span>}</div>
+                                            </div>
                                             <div className="text-right"><div className="text-xl font-black text-latte-600">${o.customerTotalTWD}</div><div className="flex gap-2 justify-end mt-1"><button onClick={(e) => { e.stopPropagation(); deleteOrder(o.id); }} className="text-cream-300 p-2 hover:text-rose-400 bg-cream-50 rounded-lg active:scale-95"><Trash2 size={16}/></button></div></div>
                                         </div>
                                         <div className="grid grid-cols-2 gap-3"><button onClick={(e) => { e.stopPropagation(); toggleStatus(o.id, 'isPurchased'); }} className={`text-xs py-2 rounded-xl font-bold flex items-center justify-center gap-1 border ${o.isPurchased ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-cream-50 text-latte-300 border-cream-200'}`}><CheckCircle2 size={14}/> {o.isPurchased ? '已核對' : '待核對'}</button><button onClick={(e) => { e.stopPropagation(); toggleStatus(o.id, 'isPicked'); }} className={`text-xs py-2 rounded-xl font-bold flex items-center justify-center gap-1 border ${o.isPicked ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-cream-50 text-latte-300 border-cream-200'}`}><ShoppingBag size={14}/> {o.isPicked ? '已入袋' : '待入袋'}</button></div>
@@ -837,30 +872,39 @@ ${details}
                         {/* 4. Dashboard Tab */}
                         {activeTab === 'dashboard' && (
                             <div className="grid grid-cols-3 gap-3 animate-in">
+                                {/* === [新增] 日期區間篩選器 === */}
+                                <div className="col-span-3 bg-white p-3 rounded-2xl shadow-sm border border-cream-200 flex gap-2 items-center mb-1">
+                                    <Calendar size={16} className="text-latte-400 ml-1"/>
+                                    <input type="date" className="flex-1 bg-cream-50 text-xs p-2 rounded-xl outline-none text-latte-700 border border-cream-200 font-bold" value={dateRange.start} onChange={e => setDateRange(p => ({...p, start: e.target.value}))} />
+                                    <span className="text-latte-300 font-bold">-</span>
+                                    <input type="date" className="flex-1 bg-cream-50 text-xs p-2 rounded-xl outline-none text-latte-700 border border-cream-200 font-bold" value={dateRange.end} onChange={e => setDateRange(p => ({...p, end: e.target.value}))} />
+                                    {(dateRange.start || dateRange.end) && <button onClick={() => setDateRange({start:'', end:''})} className="p-2 text-rose-400 hover:text-rose-600 bg-rose-50 rounded-xl active:scale-95 transition-all"><RotateCcw size={16}/></button>}
+                                </div>
+
                                 <div className="bg-[#D98E73] text-white p-4 rounded-2xl shadow-lg relative overflow-hidden flex flex-col justify-center items-center text-center">
                                     <div className="opacity-10 absolute"><Coins size={60}/></div>
                                     <p className="text-[10px] font-bold opacity-90 tracking-wider">日幣總投</p>
-                                    <p className="text-xl font-black mt-1">¥{stats.totalJPY.toLocaleString()}</p>
+                                    <p className="text-xl font-black mt-1">¥{dashboardStats.totalJPY.toLocaleString()}</p>
                                 </div>
 
                                 <div className="bg-[#BF9E85] text-white p-4 rounded-2xl shadow-lg relative overflow-hidden flex flex-col justify-center items-center text-center">
                                     <div className="opacity-10 absolute"><DollarSign size={60}/></div>
                                     <p className="text-[10px] font-bold opacity-90 tracking-wider">預估營收</p>
-                                    <p className="text-xl font-black mt-1">${stats.totalRevenue.toLocaleString()}</p>
+                                    <p className="text-xl font-black mt-1">${dashboardStats.totalRevenue.toLocaleString()}</p>
                                 </div>
 
                                 <div className="bg-[#8C7A6B] text-white p-4 rounded-2xl shadow-lg relative overflow-hidden flex flex-col justify-center items-center text-center">
                                     <div className="opacity-10 absolute"><Package size={60}/></div>
                                     <p className="text-[10px] font-bold opacity-90 tracking-wider">總顆數</p>
-                                    <p className="text-xl font-black mt-1">{stats.totalCount}</p>
+                                    <p className="text-xl font-black mt-1">{dashboardStats.totalCount}</p>
                                 </div>
 
-                                <div className="col-span-3 bg-white p-4 rounded-3xl border border-cream-200 shadow-sm flex justify-around text-center gap-1">
-                                    <button onClick={() => { setShowDashboardDetail('purchase'); setDashboardSearchQuery(''); }} className="flex-1 hover:bg-cream-50 rounded-xl transition p-2"><div className="text-3xl font-black text-latte-400">{stats.pendingPurchase}</div><div className="text-xs text-latte-300 font-bold mt-1">待核對</div></button>
+                                <div className="col-span-3 bg-white p-4 rounded-3xl border border-cream-200 shadow-sm flex justify-around text-center gap-1 mt-1">
+                                    <button onClick={() => { setShowDashboardDetail('purchase'); setDashboardSearchQuery(''); }} className="flex-1 hover:bg-cream-50 rounded-xl transition p-2"><div className="text-3xl font-black text-latte-400">{dashboardStats.pendingPurchase}</div><div className="text-xs text-latte-300 font-bold mt-1">待核對</div></button>
                                     <div className="w-px bg-cream-200"></div>
-                                    <button onClick={() => { setShowDashboardDetail('pick'); setDashboardSearchQuery(''); }} className="flex-1 hover:bg-cream-50 rounded-xl transition p-2"><div className="text-3xl font-black text-latte-600">{stats.pendingPick}</div><div className="text-xs text-latte-300 font-bold mt-1">待入袋</div></button>
+                                    <button onClick={() => { setShowDashboardDetail('pick'); setDashboardSearchQuery(''); }} className="flex-1 hover:bg-cream-50 rounded-xl transition p-2"><div className="text-3xl font-black text-latte-600">{dashboardStats.pendingPick}</div><div className="text-xs text-latte-300 font-bold mt-1">待入袋</div></button>
                                     <div className="w-px bg-cream-200"></div>
-                                    <button onClick={() => { setShowDashboardDetail('releasing'); setDashboardSearchQuery(''); }} className="flex-1 hover:bg-cream-50 rounded-xl transition p-2"><div className="text-3xl font-black text-amber-500">{stats.releasingCount}</div><div className="text-xs text-amber-500 font-bold mt-1">釋出池</div></button>
+                                    <button onClick={() => { setShowDashboardDetail('releasing'); setDashboardSearchQuery(''); }} className="flex-1 hover:bg-cream-50 rounded-xl transition p-2"><div className="text-3xl font-black text-amber-500">{dashboardStats.releasingCount}</div><div className="text-xs text-amber-500 font-bold mt-1">釋出池</div></button>
                                 </div>
                             </div>
                         )}
