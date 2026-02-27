@@ -93,13 +93,15 @@
             
             // History (Ensuring structure)
             const [history, setHistory] = useState(() => {
-                const h = loadLocal('cuibo_gasha_history', { machines: [], customers: [], variants: [], machineVariants: {} });
+                const h = loadLocal('cuibo_gasha_history', { machines: [], customers: [], variants: [], machineVariants: {}, machinePrices: {} });
                 return {
                     machines: Array.isArray(h.machines) ? h.machines : [],
                     customers: Array.isArray(h.customers) ? h.customers : [],
                     variants: Array.isArray(h.variants) ? h.variants : [],
                     // 新增屬性：紀錄機台對應的款式歷史 { "機台A": ["款式1", "款式2"] }
-                    machineVariants: h.machineVariants || {}
+                    machineVariants: h.machineVariants || {},
+                    // 新增屬性：紀錄機台對應的日幣價格 { "機台A": 500 }
+                    machinePrices: h.machinePrices || {}
                 };
             });
 
@@ -247,6 +249,36 @@
             // 4. Handlers
             const handlePriceSelect = (jpy) => setCurrentMachine(p => ({ ...p, priceJPY: jpy, priceTWD: priceTable[jpy] || 0 }));
             
+            // === [新增] 主頁機台名稱變更處理 (包含價格連動) ===
+            const handleMachineChange = (val) => {
+                const newName = val;
+                let updates = { name: newName };
+                
+                // 若歷史紀錄中有該機台的價格，自動帶入並換算
+                if (history.machinePrices && history.machinePrices[newName]) {
+                    const savedJPY = history.machinePrices[newName];
+                    updates.priceJPY = savedJPY;
+                    updates.priceTWD = priceTable[savedJPY] || 0;
+                }
+                
+                setCurrentMachine(prev => ({ ...prev, ...updates }));
+            };
+
+            // === [新增] 編輯彈窗機台名稱變更處理 (包含價格連動) ===
+            const handleEditMachineChange = (val) => {
+                const newName = val;
+                let updates = { productName: newName };
+                
+                // 若歷史紀錄中有該機台的價格，自動帶入並換算
+                if (history.machinePrices && history.machinePrices[newName]) {
+                    const savedJPY = history.machinePrices[newName];
+                    updates.unitPriceJPY = savedJPY;
+                    updates.unitPriceTWD = priceTable[savedJPY] || 0;
+                }
+                
+                setEditingOrder(prev => ({ ...prev, ...updates }));
+            };
+
             // Base Add Order Logic
             const processAddOrder = () => {
                 if (!inputCustomer.trim()) { notify("請輸入顧客名稱"); return false; }
@@ -263,13 +295,18 @@
                 updateHistory('customers', inputCustomer);
                 updateHistory('variants', variantName); // 仍保留全域寫入，以防萬一
 
-                // === [新增] 將「機台名稱」與「款式」的對應關係寫入 ===
+                // === [更新] 將「機台名稱」與「款式」的對應關係，以及「機台名稱」與「價格」的對應關係寫入 ===
                 setHistory(prev => {
                     const mv = prev.machineVariants || {};
+                    const mp = prev.machinePrices || {};
                     const list = mv[machineName] || [];
                     // 將新填寫的款式加入該機台的專屬清單中，最多保留 50 筆
                     const newList = [variantName, ...list.filter(x => x !== variantName)].slice(0, 50);
-                    return { ...prev, machineVariants: { ...mv, [machineName]: newList } };
+                    return { 
+                        ...prev, 
+                        machineVariants: { ...mv, [machineName]: newList },
+                        machinePrices: { ...mp, [machineName]: currentMachine.priceJPY }
+                    };
                 });
 
                 const newOrder = {
@@ -391,17 +428,17 @@
 
             const handleClearHistory = () => {
                 triggerConfirm('清除歷史', '確定清除所有自動完成的歷史紀錄？', () => {
-                    // 同時清空 machineVariants
-                    setHistory({ machines: [], customers: [], variants: [], machineVariants: {} });
+                    // 同時清空 machineVariants 與 machinePrices
+                    setHistory({ machines: [], customers: [], variants: [], machineVariants: {}, machinePrices: {} });
                     notify("歷史紀錄已清空");
                 }, 'danger');
             };
 
             const handleExportBackup = () => { saveAs(new Blob([JSON.stringify({ orders, priceTable, history, timestamp: new Date().toISOString() }, null, 2)], { type: "application/json" }), `CuiboGasha_Backup_${new Date().toISOString().slice(0,10)}.json`); notify("下載成功"); };
-            const handleImportBackup = (e) => { const f = e.target.files[0]; if(!f)return; const r = new FileReader(); r.onload=(ev)=>{ try{ const d=JSON.parse(ev.target.result); if(d.orders) triggerConfirm('還原', `時間: ${d.timestamp}`, ()=>{ setOrders(d.orders); if(d.priceTable) setPriceTable(d.priceTable); if(d.history) setHistory({ machines: d.history.machines||[], customers: d.history.customers||[], variants: d.history.variants||[], machineVariants: d.history.machineVariants||{} }); notify("成功"); setShowGlobalSettings(false); }, 'danger'); }catch(x){notify("錯誤");} e.target.value=''; }; r.readAsText(f); };
+            const handleImportBackup = (e) => { const f = e.target.files[0]; if(!f)return; const r = new FileReader(); r.onload=(ev)=>{ try{ const d=JSON.parse(ev.target.result); if(d.orders) triggerConfirm('還原', `時間: ${d.timestamp}`, ()=>{ setOrders(d.orders); if(d.priceTable) setPriceTable(d.priceTable); if(d.history) setHistory({ machines: d.history.machines||[], customers: d.history.customers||[], variants: d.history.variants||[], machineVariants: d.history.machineVariants||{}, machinePrices: d.history.machinePrices||{} }); notify("成功"); setShowGlobalSettings(false); }, 'danger'); }catch(x){notify("錯誤");} e.target.value=''; }; r.readAsText(f); };
             const handleExportCSV = () => { const bom="\uFEFF"; const h="日期,顧客,機台,款式,數量,單價(台),總額,核對,入袋,釋出中\n"; const r=orders.map(o=>`${o.date},${o.customer},${o.productName},${o.variant},${o.qty},${o.unitPriceTWD},${o.customerTotalTWD},${o.isPurchased?'V':'X'},${o.isPicked?'V':'X'},${o.isReleasing?'Y':''}`).join("\n"); saveAs(new Blob([bom+h+r],{type:"text/csv"}),"Export.csv"); notify("CSV下載"); };
             const handleCloudUpload = async () => { if(!apiUrl)return notify("無API"); setIsSyncing(true); try{ await fetch(apiUrl,{method:'POST',body:JSON.stringify({orders,priceTable,history,timestamp:new Date().toISOString()})}); notify("備份成功"); }catch(e){notify("失敗");}finally{setIsSyncing(false);} };
-            const handleCloudDownload = async () => { if(!apiUrl)return notify("無API"); setIsSyncing(true); try{ const r=await fetch(apiUrl); const d=await r.json(); if(d.orders) triggerConfirm('同步',`時間:${d.timestamp}`,()=>{setOrders(d.orders);if(d.priceTable)setPriceTable(d.priceTable);if(d.history)setHistory({ machines: d.history.machines||[], customers: d.history.customers||[], variants: d.history.variants||[], machineVariants: d.history.machineVariants||{} });notify("成功");setShowGlobalSettings(false);},'danger'); }catch(e){notify("失敗");}finally{setIsSyncing(false);} };
+            const handleCloudDownload = async () => { if(!apiUrl)return notify("無API"); setIsSyncing(true); try{ const r=await fetch(apiUrl); const d=await r.json(); if(d.orders) triggerConfirm('同步',`時間:${d.timestamp}`,()=>{setOrders(d.orders);if(d.priceTable)setPriceTable(d.priceTable);if(d.history)setHistory({ machines: d.history.machines||[], customers: d.history.customers||[], variants: d.history.variants||[], machineVariants: d.history.machineVariants||{}, machinePrices: d.history.machinePrices||{} });notify("成功");setShowGlobalSettings(false);},'danger'); }catch(e){notify("失敗");}finally{setIsSyncing(false);} };
             
             const handleSaveEditedOrder = () => { 
                 if(!editingOrder) return;
@@ -411,12 +448,17 @@
                 if(!mName) return notify("機台名稱不可為空");
                 if(!vName) return notify("款式不可為空");
 
-                // 編輯時若輸入新的款式，也幫忙記錄進去
+                // 編輯時若輸入新的款式或價格，也幫忙記錄進去
                 setHistory(prev => {
                     const mv = prev.machineVariants || {};
+                    const mp = prev.machinePrices || {};
                     const list = mv[mName] || [];
                     const newList = [vName, ...list.filter(x => x !== vName)].slice(0, 50);
-                    return { ...prev, machineVariants: { ...mv, [mName]: newList } };
+                    return { 
+                        ...prev, 
+                        machineVariants: { ...mv, [mName]: newList },
+                        machinePrices: { ...mp, [mName]: editingOrder.unitPriceJPY }
+                    };
                 });
 
                 const eco=editingOrder.ecoFeePerUnit*editingOrder.qty; 
@@ -635,7 +677,7 @@ ${details}
                                         placeholder="輸入機台名稱 (例: 吉伊卡哇)" 
                                         className="w-full text-lg font-bold border-b-2 border-cream-200 focus:border-latte-400 outline-none pb-2 mb-4 placeholder-latte-300 bg-transparent text-latte-800"
                                         value={currentMachine.name || ''}
-                                        onChange={e => setCurrentMachine({...currentMachine, name: e.target.value})}
+                                        onChange={e => handleMachineChange(e.target.value)}
                                         autoComplete="off"
                                     />
                                     <datalist id="hist-machines">
@@ -1020,7 +1062,7 @@ ${details}
                                                     list="hist-machines" 
                                                     className="w-full bg-white border border-cream-200 p-3 rounded-xl outline-none focus:border-latte-400 font-bold text-latte-800" 
                                                     value={editingOrder.productName || ''} 
-                                                    onChange={e=>setEditingOrder({...editingOrder, productName: e.target.value})}
+                                                    onChange={e=>handleEditMachineChange(e.target.value)}
                                                     autoComplete="off"
                                                 />
                                             </div>
