@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Cuibo Gasha WMS Pro v2.5</title>
+    <title>Cuibo Gasha WMS Pro v2.6</title>
     
     <!-- 1. Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -75,6 +75,45 @@
             const ECO_FEE = 10; 
             const DEFAULT_API_URL = "https://script.google.com/macros/s/AKfycbzUzREPd7UAzndt6i4qN70nkd1ZUJWdzJa3DbQjN7yFZeJ2ne5Nj9f767-tMSaB7ayI/exec";
 
+            // === [新增] 全域資料強制合併與清理工具 ===
+            // 負責過濾空白字元、強制轉換數字，並把相同的明細無條件聚合
+            const mergeOrdersList = (list) => {
+                const merged = [];
+                list.forEach(o => {
+                    const c1 = (o.customer || '').trim();
+                    const p1 = (o.productName || '').trim();
+                    const v1 = (o.variant || '').trim();
+                    
+                    const existingIdx = merged.findIndex(m =>
+                        m.customer === c1 &&
+                        m.productName === p1 &&
+                        m.variant === v1 &&
+                        Number(m.unitPriceTWD || 0) === Number(o.unitPriceTWD || 0) &&
+                        Number(m.ecoFeePerUnit || 0) === Number(o.ecoFeePerUnit || 0) &&
+                        !!m.isPurchased === !!o.isPurchased &&
+                        !!m.isPicked === !!o.isPicked &&
+                        !!m.isReleasing === !!o.isReleasing
+                    );
+
+                    if (existingIdx !== -1) {
+                        const m = merged[existingIdx];
+                        merged[existingIdx] = {
+                            ...m,
+                            qty: Number(m.qty) + Number(o.qty),
+                            ecoFeeTotal: Number(m.ecoFeeTotal) + Number(o.ecoFeeTotal),
+                            gashaTotalJPY: Number(m.gashaTotalJPY) + Number(o.gashaTotalJPY),
+                            gashaTotalTWD: Number(m.gashaTotalTWD) + Number(o.gashaTotalTWD),
+                            customerTotalTWD: Number(m.customerTotalTWD) + Number(o.customerTotalTWD),
+                            date: (o.date > m.date) ? o.date : m.date,
+                            time: (o.date === m.date) ? (o.time > m.time ? o.time : m.time) : (o.date > m.date ? o.time : m.time)
+                        };
+                    } else {
+                        merged.push({ ...o, customer: c1, productName: p1, variant: v1 });
+                    }
+                });
+                return merged;
+            };
+
             // 2. State Management
             const loadLocal = (key, def) => { 
                 const s = localStorage.getItem(key); 
@@ -82,7 +121,21 @@
                     return s ? JSON.parse(s) : def; 
                 } catch(e) { return def; }
             };
-            const [orders, setOrders] = useState(() => loadLocal('cuibo_gasha_orders', []));
+
+            // 改用攔截器綁定 State
+            const [orders, setOrdersRaw] = useState(() => {
+                const loaded = loadLocal('cuibo_gasha_orders', []);
+                return mergeOrdersList(loaded);
+            });
+            
+            // 全域攔截器：確保任何狀態更新都會先經過合併清理
+            const setOrders = (action) => {
+                setOrdersRaw(prev => {
+                    const next = typeof action === 'function' ? action(prev) : action;
+                    return mergeOrdersList(next);
+                });
+            };
+
             const [priceTable, setPriceTable] = useState(() => {
                 const loaded = loadLocal('cuibo_gasha_pricetable', null);
                 if (!loaded || Object.keys(loaded).length === 0) return DEFAULT_PRICE_TABLE;
@@ -140,46 +193,6 @@
             const [confirmConfig, setConfirmConfig] = useState(null);
             const fileInputRef = useRef(null);
             const [dateRange, setDateRange] = useState({ start: '', end: '' });
-
-            // === [新增] 自動清理與合併重複訂單機制 ===
-            // 系統載入時，自動掃描並合併過去的相同訂單（同客、同機台、同款式、同價格、同狀態）
-            useEffect(() => {
-                setOrders(prev => {
-                    let changed = false;
-                    const merged = [];
-                    prev.forEach(o => {
-                        const existingIdx = merged.findIndex(m =>
-                            m.customer === o.customer &&
-                            m.productName === o.productName &&
-                            m.variant === o.variant &&
-                            m.unitPriceJPY === o.unitPriceJPY &&
-                            m.ecoFeePerUnit === o.ecoFeePerUnit &&
-                            m.isPurchased === o.isPurchased &&
-                            m.isPicked === o.isPicked &&
-                            m.isReleasing === o.isReleasing
-                        );
-
-                        if (existingIdx !== -1) {
-                            changed = true;
-                            const m = merged[existingIdx];
-                            merged[existingIdx] = {
-                                ...m,
-                                qty: m.qty + o.qty,
-                                ecoFeeTotal: m.ecoFeeTotal + o.ecoFeeTotal,
-                                gashaTotalJPY: m.gashaTotalJPY + o.gashaTotalJPY,
-                                gashaTotalTWD: m.gashaTotalTWD + o.gashaTotalTWD,
-                                customerTotalTWD: m.customerTotalTWD + o.customerTotalTWD,
-                                // 合併時保留較新的時間紀錄
-                                date: o.date > m.date ? o.date : m.date,
-                                time: o.date > m.date ? o.time : m.time
-                            };
-                        } else {
-                            merged.push({...o});
-                        }
-                    });
-                    return changed ? merged : prev;
-                });
-            }, []);
 
             // Persistence
             useEffect(() => { localStorage.setItem('cuibo_gasha_orders', JSON.stringify(orders)); }, [orders]);
@@ -316,7 +329,7 @@
                 setEditingOrder(prev => ({ ...prev, ...updates }));
             };
 
-            // === [更新] 智慧新增邏輯 (相同商品自動合併) ===
+            // === [更新] 智慧新增邏輯 (依賴攔截器自動合併) ===
             const processAddOrder = () => {
                 if (!inputCustomer.trim()) { notify("請輸入顧客名稱"); return false; }
                 if (!currentMachine.name.trim()) { notify("請輸入機台名稱"); return false; }
@@ -352,50 +365,19 @@
                 const currentDate = `${yy}-${mm}-${dd}`;
                 const currentTime = now.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute: '2-digit' });
 
-                setOrders(p => {
-                    // 1. 尋找完全相同的未處理訂單
-                    const existingIdx = p.findIndex(o =>
-                        o.customer === customerName &&
-                        o.productName === machineName &&
-                        o.variant === variantName &&
-                        o.unitPriceJPY === currentMachine.priceJPY &&
-                        o.ecoFeePerUnit === (isEco ? ECO_FEE : 0) &&
-                        o.isPurchased === false &&
-                        o.isPicked === false &&
-                        o.isReleasing === false
-                    );
-
-                    // 2. 若存在，直接累加數量與金額，並將該筆資料移至陣列最前方 (表示最新)
-                    if (existingIdx !== -1) {
-                        const existing = p[existingIdx];
-                        const updatedOrder = {
-                            ...existing,
-                            qty: existing.qty + inputQty,
-                            ecoFeeTotal: existing.ecoFeeTotal + ecoTotal,
-                            gashaTotalJPY: existing.gashaTotalJPY + (currentMachine.priceJPY * inputQty),
-                            gashaTotalTWD: existing.gashaTotalTWD + (unitPriceTWD * inputQty),
-                            customerTotalTWD: existing.customerTotalTWD + ((unitPriceTWD * inputQty) + ecoTotal),
-                            date: currentDate,
-                            time: currentTime
-                        };
-                        const newP = [...p];
-                        newP.splice(existingIdx, 1); // 移除原本的
-                        return [updatedOrder, ...newP]; // 放到最上方
-                    }
-
-                    // 3. 若不存在，才建立全新的訂單 ID
-                    const newOrder = {
-                        id: Date.now(), 
-                        date: currentDate,
-                        time: currentTime,
-                        customer: customerName, productName: machineName, variant: variantName, qty: inputQty,
-                        unitPriceJPY: currentMachine.priceJPY, unitPriceTWD: unitPriceTWD,
-                        ecoFeePerUnit: isEco ? ECO_FEE : 0, ecoFeeTotal: ecoTotal,
-                        gashaTotalJPY: currentMachine.priceJPY * inputQty, gashaTotalTWD: unitPriceTWD * inputQty, customerTotalTWD: (unitPriceTWD * inputQty) + ecoTotal,
-                        isPurchased: false, isPicked: false, isReleasing: false
-                    };
-                    return [newOrder, ...p];
-                });
+                const newOrder = {
+                    id: Date.now(), 
+                    date: currentDate,
+                    time: currentTime,
+                    customer: customerName, productName: machineName, variant: variantName, qty: inputQty,
+                    unitPriceJPY: currentMachine.priceJPY, unitPriceTWD: unitPriceTWD,
+                    ecoFeePerUnit: isEco ? ECO_FEE : 0, ecoFeeTotal: ecoTotal,
+                    gashaTotalJPY: currentMachine.priceJPY * inputQty, gashaTotalTWD: unitPriceTWD * inputQty, customerTotalTWD: (unitPriceTWD * inputQty) + ecoTotal,
+                    isPurchased: false, isPicked: false, isReleasing: false
+                };
+                
+                // 透過攔截器，新訂單會自動與舊的相同訂單合併，並浮動到最上方
+                setOrders(p => [newOrder, ...p]);
 
                 notify(`已加入: ${customerName}`);
                 return true;
@@ -456,20 +438,8 @@
             };
             
             const handleCancelRelease = (id) => {
-                setOrders(prev => {
-                    const target = prev.find(o => o.id === id);
-                    if (!target) return prev;
-                    const siblingIndex = prev.findIndex(o => o.id !== id && o.customer === target.customer && o.productName === target.productName && o.variant === target.variant && o.unitPriceJPY === target.unitPriceJPY && o.ecoFeePerUnit === target.ecoFeePerUnit && o.isPurchased === target.isPurchased && o.isPicked === target.isPicked && o.isReleasing === false);
-                    if (siblingIndex !== -1) {
-                        const sibling = prev[siblingIndex];
-                        const newQty = sibling.qty + target.qty;
-                        const ecoTotal = sibling.ecoFeePerUnit * newQty;
-                        const mergedOrder = { ...sibling, qty: newQty, ecoFeeTotal: ecoTotal, gashaTotalJPY: sibling.unitPriceJPY * newQty, gashaTotalTWD: sibling.unitPriceTWD * newQty, customerTotalTWD: (sibling.unitPriceTWD * newQty) + ecoTotal };
-                        const newOrders = [...prev]; newOrders[siblingIndex] = mergedOrder; return newOrders.filter(o => o.id !== id);
-                    } else {
-                        return prev.map(o => o.id === id ? { ...o, isReleasing: false } : o);
-                    }
-                });
+                // 透過攔截器，只要解除釋出狀態，就會自動與原有的未釋出訂單無縫合併
+                setOrders(prev => prev.map(o => o.id === id ? { ...o, isReleasing: false } : o));
                 notify("已取消釋出");
             };
 
@@ -1222,4 +1192,3 @@ ${details}
     </script>
 </body>
 </html>
-
