@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Cuibo Gasha WMS Pro v2.4</title>
+    <title>Cuibo Gasha WMS Pro v2.5</title>
     
     <!-- 1. Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -73,7 +73,6 @@
             // 1. Settings & Constants
             const DEFAULT_PRICE_TABLE = { 100: 50, 200: 80, 300: 120, 400: 140, 500: 170, 600: 190, 800: 260, 1000: 360, 1500: 450 };
             const ECO_FEE = 10; 
-            const RELEASE_ZONE_NAME = "釋出區";
             const DEFAULT_API_URL = "https://script.google.com/macros/s/AKfycbzUzREPd7UAzndt6i4qN70nkd1ZUJWdzJa3DbQjN7yFZeJ2ne5Nj9f767-tMSaB7ayI/exec";
 
             // 2. State Management
@@ -91,16 +90,14 @@
             });
             const [apiUrl, setApiUrl] = useState(() => localStorage.getItem('cuibo_gasha_api_url') || DEFAULT_API_URL);
             
-            // History (Ensuring structure)
+            // History
             const [history, setHistory] = useState(() => {
                 const h = loadLocal('cuibo_gasha_history', { machines: [], customers: [], variants: [], machineVariants: {}, machinePrices: {} });
                 return {
                     machines: Array.isArray(h.machines) ? h.machines : [],
                     customers: Array.isArray(h.customers) ? h.customers : [],
                     variants: Array.isArray(h.variants) ? h.variants : [],
-                    // 新增屬性：紀錄機台對應的款式歷史 { "機台A": ["款式1", "款式2"] }
                     machineVariants: h.machineVariants || {},
-                    // 新增屬性：紀錄機台對應的日幣價格 { "機台A": 500 }
                     machinePrices: h.machinePrices || {}
                 };
             });
@@ -142,9 +139,47 @@
 
             const [confirmConfig, setConfirmConfig] = useState(null);
             const fileInputRef = useRef(null);
-
-            // === [新增] 日期區間篩選狀態 ===
             const [dateRange, setDateRange] = useState({ start: '', end: '' });
+
+            // === [新增] 自動清理與合併重複訂單機制 ===
+            // 系統載入時，自動掃描並合併過去的相同訂單（同客、同機台、同款式、同價格、同狀態）
+            useEffect(() => {
+                setOrders(prev => {
+                    let changed = false;
+                    const merged = [];
+                    prev.forEach(o => {
+                        const existingIdx = merged.findIndex(m =>
+                            m.customer === o.customer &&
+                            m.productName === o.productName &&
+                            m.variant === o.variant &&
+                            m.unitPriceJPY === o.unitPriceJPY &&
+                            m.ecoFeePerUnit === o.ecoFeePerUnit &&
+                            m.isPurchased === o.isPurchased &&
+                            m.isPicked === o.isPicked &&
+                            m.isReleasing === o.isReleasing
+                        );
+
+                        if (existingIdx !== -1) {
+                            changed = true;
+                            const m = merged[existingIdx];
+                            merged[existingIdx] = {
+                                ...m,
+                                qty: m.qty + o.qty,
+                                ecoFeeTotal: m.ecoFeeTotal + o.ecoFeeTotal,
+                                gashaTotalJPY: m.gashaTotalJPY + o.gashaTotalJPY,
+                                gashaTotalTWD: m.gashaTotalTWD + o.gashaTotalTWD,
+                                customerTotalTWD: m.customerTotalTWD + o.customerTotalTWD,
+                                // 合併時保留較新的時間紀錄
+                                date: o.date > m.date ? o.date : m.date,
+                                time: o.date > m.date ? o.time : m.time
+                            };
+                        } else {
+                            merged.push({...o});
+                        }
+                    });
+                    return changed ? merged : prev;
+                });
+            }, []);
 
             // Persistence
             useEffect(() => { localStorage.setItem('cuibo_gasha_orders', JSON.stringify(orders)); }, [orders]);
@@ -152,10 +187,7 @@
             useEffect(() => { localStorage.setItem('cuibo_gasha_api_url', apiUrl); }, [apiUrl]);
             useEffect(() => { localStorage.setItem('cuibo_gasha_history', JSON.stringify(history)); }, [history]);
 
-            // Clear selection on tab change
-            useEffect(() => {
-                if(activeTab !== 'customers') setSelectedForExport(new Set());
-            }, [activeTab]);
+            useEffect(() => { if(activeTab !== 'customers') setSelectedForExport(new Set()); }, [activeTab]);
 
             // 3. Logic & Computed Values
             const notify = (msg) => { setNotification(msg); setTimeout(() => setNotification(null), 3000); };
@@ -171,24 +203,15 @@
                 });
             };
 
-            // === [新增] 動態過濾款式邏輯 (主介面加單使用) ===
             const availableVariants = useMemo(() => {
                 const mName = currentMachine.name.trim();
-                if (!mName) return history.variants; // 若未輸入機台，退回顯示全部款式
-
-                // 1. 從歷史映射表中取出該機台曾輸入過的款式
+                if (!mName) return history.variants; 
                 const historyMapVars = history.machineVariants?.[mName] || [];
-                // 2. 爬取目前活著的訂單中，該機台被選用的款式
                 const orderVars = orders.filter(o => o.productName === mName).map(o => o.variant);
-                
-                // 合併並去重複
                 const combined = [...new Set([...historyMapVars, ...orderVars])];
-                
-                // 如果該機台確實有專屬的款式紀錄就顯示專屬的，如果完全沒有，則顯示全域紀錄作為備用選項
                 return combined.length > 0 ? combined : history.variants;
             }, [currentMachine.name, history, orders]);
 
-            // === [新增] 動態過濾款式邏輯 (編輯彈窗使用) ===
             const editAvailableVariants = useMemo(() => {
                 if (!editingOrder || !editingOrder.productName) return history.variants;
                 const mName = editingOrder.productName.trim();
@@ -204,8 +227,9 @@
                 orders.forEach(o => {
                     const cleanName = o.customer ? o.customer.trim() : 'Unknown';
                     if (!map[cleanName]) map[cleanName] = { name: cleanName, totalSpent: 0, items: [], orderCount: 0 };
-                    map[cleanName].orderCount += 1;
+                    map[cleanName].orderCount += o.qty; // 改為顯示總顆數更直觀
                     map[cleanName].totalSpent += o.customerTotalTWD;
+                    // 因為外層已經做了合併機制，這邊的 o 已經是合併後的乾淨資料，直接放入即可
                     map[cleanName].items.push({ ...o, itemTotal: o.customerTotalTWD, finalPrice: o.unitPriceTWD });
                 });
                 return Object.values(map).sort((a,b) => b.totalSpent - a.totalSpent);
@@ -230,7 +254,6 @@
 
             const filteredOrders = orders.filter(o => o.customer.includes(searchQuery) || o.productName.includes(searchQuery) || (o.variant && o.variant.includes(searchQuery)));
 
-            // === [新增] 儀表板專用：依據日期區間篩選訂單 ===
             const dashboardOrders = useMemo(() => {
                 return orders.filter(o => {
                     if (dateRange.start && o.date < dateRange.start) return false;
@@ -239,7 +262,6 @@
                 });
             }, [orders, dateRange]);
 
-            // === [更新] 儀表板專用：依據篩選後的訂單計算統計數據 ===
             const dashboardStats = useMemo(() => {
                 const totalRevenue = dashboardOrders.reduce((acc, o) => acc + o.customerTotalTWD, 0);
                 const totalJPY = dashboardOrders.reduce((acc, o) => acc + o.gashaTotalJPY, 0);
@@ -272,37 +294,29 @@
             // 4. Handlers
             const handlePriceSelect = (jpy) => setCurrentMachine(p => ({ ...p, priceJPY: jpy, priceTWD: priceTable[jpy] || 0 }));
             
-            // === [新增] 主頁機台名稱變更處理 (包含價格連動) ===
             const handleMachineChange = (val) => {
                 const newName = val;
                 let updates = { name: newName };
-                
-                // 若歷史紀錄中有該機台的價格，自動帶入並換算
                 if (history.machinePrices && history.machinePrices[newName]) {
                     const savedJPY = history.machinePrices[newName];
                     updates.priceJPY = savedJPY;
                     updates.priceTWD = priceTable[savedJPY] || 0;
                 }
-                
                 setCurrentMachine(prev => ({ ...prev, ...updates }));
             };
 
-            // === [新增] 編輯彈窗機台名稱變更處理 (包含價格連動) ===
             const handleEditMachineChange = (val) => {
                 const newName = val;
                 let updates = { productName: newName };
-                
-                // 若歷史紀錄中有該機台的價格，自動帶入並換算
                 if (history.machinePrices && history.machinePrices[newName]) {
                     const savedJPY = history.machinePrices[newName];
                     updates.unitPriceJPY = savedJPY;
                     updates.unitPriceTWD = priceTable[savedJPY] || 0;
                 }
-                
                 setEditingOrder(prev => ({ ...prev, ...updates }));
             };
 
-            // Base Add Order Logic
+            // === [更新] 智慧新增邏輯 (相同商品自動合併) ===
             const processAddOrder = () => {
                 if (!inputCustomer.trim()) { notify("請輸入顧客名稱"); return false; }
                 if (!currentMachine.name.trim()) { notify("請輸入機台名稱"); return false; }
@@ -313,17 +327,16 @@
                 
                 const machineName = currentMachine.name.trim();
                 const variantName = currentMachine.variant.trim();
+                const customerName = inputCustomer.trim();
 
                 updateHistory('machines', machineName);
-                updateHistory('customers', inputCustomer);
-                updateHistory('variants', variantName); // 仍保留全域寫入，以防萬一
+                updateHistory('customers', customerName);
+                updateHistory('variants', variantName); 
 
-                // === [更新] 將「機台名稱」與「款式」的對應關係，以及「機台名稱」與「價格」的對應關係寫入 ===
                 setHistory(prev => {
                     const mv = prev.machineVariants || {};
                     const mp = prev.machinePrices || {};
                     const list = mv[machineName] || [];
-                    // 將新填寫的款式加入該機台的專屬清單中，最多保留 50 筆
                     const newList = [variantName, ...list.filter(x => x !== variantName)].slice(0, 50);
                     return { 
                         ...prev, 
@@ -336,19 +349,55 @@
                 const yy = now.getFullYear();
                 const mm = String(now.getMonth() + 1).padStart(2, '0');
                 const dd = String(now.getDate()).padStart(2, '0');
+                const currentDate = `${yy}-${mm}-${dd}`;
+                const currentTime = now.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute: '2-digit' });
 
-                const newOrder = {
-                    id: Date.now(), 
-                    date: `${yy}-${mm}-${dd}`,
-                    time: now.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute: '2-digit' }),
-                    customer: inputCustomer.trim(), productName: machineName, variant: variantName, qty: inputQty,
-                    unitPriceJPY: currentMachine.priceJPY, unitPriceTWD: unitPriceTWD,
-                    ecoFeePerUnit: isEco ? ECO_FEE : 0, ecoFeeTotal: ecoTotal,
-                    gashaTotalJPY: currentMachine.priceJPY * inputQty, gashaTotalTWD: unitPriceTWD * inputQty, customerTotalTWD: (unitPriceTWD * inputQty) + ecoTotal,
-                    isPurchased: false, isPicked: false, isReleasing: false
-                };
-                setOrders(p => [newOrder, ...p]);
-                notify(`已加入: ${newOrder.customer}`);
+                setOrders(p => {
+                    // 1. 尋找完全相同的未處理訂單
+                    const existingIdx = p.findIndex(o =>
+                        o.customer === customerName &&
+                        o.productName === machineName &&
+                        o.variant === variantName &&
+                        o.unitPriceJPY === currentMachine.priceJPY &&
+                        o.ecoFeePerUnit === (isEco ? ECO_FEE : 0) &&
+                        o.isPurchased === false &&
+                        o.isPicked === false &&
+                        o.isReleasing === false
+                    );
+
+                    // 2. 若存在，直接累加數量與金額，並將該筆資料移至陣列最前方 (表示最新)
+                    if (existingIdx !== -1) {
+                        const existing = p[existingIdx];
+                        const updatedOrder = {
+                            ...existing,
+                            qty: existing.qty + inputQty,
+                            ecoFeeTotal: existing.ecoFeeTotal + ecoTotal,
+                            gashaTotalJPY: existing.gashaTotalJPY + (currentMachine.priceJPY * inputQty),
+                            gashaTotalTWD: existing.gashaTotalTWD + (unitPriceTWD * inputQty),
+                            customerTotalTWD: existing.customerTotalTWD + ((unitPriceTWD * inputQty) + ecoTotal),
+                            date: currentDate,
+                            time: currentTime
+                        };
+                        const newP = [...p];
+                        newP.splice(existingIdx, 1); // 移除原本的
+                        return [updatedOrder, ...newP]; // 放到最上方
+                    }
+
+                    // 3. 若不存在，才建立全新的訂單 ID
+                    const newOrder = {
+                        id: Date.now(), 
+                        date: currentDate,
+                        time: currentTime,
+                        customer: customerName, productName: machineName, variant: variantName, qty: inputQty,
+                        unitPriceJPY: currentMachine.priceJPY, unitPriceTWD: unitPriceTWD,
+                        ecoFeePerUnit: isEco ? ECO_FEE : 0, ecoFeeTotal: ecoTotal,
+                        gashaTotalJPY: currentMachine.priceJPY * inputQty, gashaTotalTWD: unitPriceTWD * inputQty, customerTotalTWD: (unitPriceTWD * inputQty) + ecoTotal,
+                        isPurchased: false, isPicked: false, isReleasing: false
+                    };
+                    return [newOrder, ...p];
+                });
+
+                notify(`已加入: ${customerName}`);
                 return true;
             };
 
@@ -410,7 +459,7 @@
                 setOrders(prev => {
                     const target = prev.find(o => o.id === id);
                     if (!target) return prev;
-                    const siblingIndex = prev.findIndex(o => o.id !== id && o.customer === target.customer && o.productName === target.productName && o.variant === target.variant && o.unitPriceTWD === target.unitPriceTWD && o.ecoFeePerUnit === target.ecoFeePerUnit && o.isPurchased === target.isPurchased && o.isPicked === target.isPicked && o.isReleasing === false);
+                    const siblingIndex = prev.findIndex(o => o.id !== id && o.customer === target.customer && o.productName === target.productName && o.variant === target.variant && o.unitPriceJPY === target.unitPriceJPY && o.ecoFeePerUnit === target.ecoFeePerUnit && o.isPurchased === target.isPurchased && o.isPicked === target.isPicked && o.isReleasing === false);
                     if (siblingIndex !== -1) {
                         const sibling = prev[siblingIndex];
                         const newQty = sibling.qty + target.qty;
@@ -434,7 +483,10 @@
 
                 triggerConfirm('確認轉讓', `將 ${qty} 個轉讓給「${target}」？\n所有權將立即轉移，並取消釋出狀態。`, () => {
                     setOrders(prev => {
+                        // 如果轉讓全部，直接改名字
                         if (qty === transferringOrder.qty) return prev.map(o => o.id === transferringOrder.id ? { ...o, customer: target, isReleasing: false } : o);
+                        
+                        // 如果只轉讓部分，需切分訂單
                         const updated = [];
                         const ecoNew = transferringOrder.ecoFeePerUnit * qty;
                         updated.push({ ...transferringOrder, id: Date.now(), customer: target, qty: qty, ecoFeeTotal: ecoNew, gashaTotalJPY: transferringOrder.unitPriceJPY*qty, gashaTotalTWD: transferringOrder.unitPriceTWD*qty, customerTotalTWD: (transferringOrder.unitPriceTWD*qty)+ecoNew, isReleasing: false });
@@ -458,7 +510,6 @@
 
             const handleClearHistory = () => {
                 triggerConfirm('清除歷史', '確定清除所有自動完成的歷史紀錄？', () => {
-                    // 同時清空 machineVariants 與 machinePrices
                     setHistory({ machines: [], customers: [], variants: [], machineVariants: {}, machinePrices: {} });
                     notify("歷史紀錄已清空");
                 }, 'danger');
@@ -478,7 +529,6 @@
                 if(!mName) return notify("機台名稱不可為空");
                 if(!vName) return notify("款式不可為空");
 
-                // 編輯時若輸入新的款式或價格，也幫忙記錄進去
                 setHistory(prev => {
                     const mv = prev.machineVariants || {};
                     const mp = prev.machinePrices || {};
@@ -590,7 +640,6 @@ ${details}
                 } 
             };
 
-            // === 批量匯出選取功能 ===
             const toggleExportSelection = (name) => {
                 const newSet = new Set(selectedForExport);
                 if (newSet.has(name)) newSet.delete(name);
@@ -676,7 +725,6 @@ ${details}
                         {activeTab === 'input' && (
                             <div className="space-y-4 animate-in">
                                 
-                                {/* 1. Customer Input */}
                                 <div className="bg-white rounded-3xl p-5 shadow-lg border-2 border-latte-200">
                                     <div className="flex items-center gap-3">
                                         <div className="w-10 h-10 bg-cream-100 rounded-full flex items-center justify-center text-latte-400"><User size={20}/></div>
@@ -695,7 +743,6 @@ ${details}
                                     </div>
                                 </div>
 
-                                {/* 2. Machine Input */}
                                 <div className="bg-white rounded-3xl p-5 shadow-soft border border-cream-200">
                                     <div className="flex justify-between items-center mb-2">
                                         <div className="text-xs font-bold text-latte-400 tracking-wider flex items-center gap-1"><Tag size={12}/> 機台設定</div>
@@ -743,13 +790,11 @@ ${details}
                                             autoComplete="off"
                                         />
                                         <datalist id="hist-variants">
-                                            {/* 動態綁定：只顯示對應機台的款式 */}
                                             {availableVariants.map((v, i) => <option key={`${v}-${i}`} value={v}/>)}
                                         </datalist>
                                     </div>
                                 </div>
 
-                                {/* 3. Qty & Add Grid */}
                                 <div className="bg-white rounded-3xl p-5 shadow-lg border-2 border-latte-200">
                                     <div className="flex items-center justify-between mb-4 border-b border-cream-200 pb-4">
                                         <div className="flex items-center gap-3 bg-cream-50 rounded-full p-1 border border-cream-200">
@@ -766,7 +811,6 @@ ${details}
                                         </button>
                                     </div>
                                     
-                                    {/* 4 Custom Add Action Buttons */}
                                     <div className="grid grid-cols-2 gap-3">
                                         <button onClick={handleAddSameCustomer} className="bg-[#DB9079] text-white py-4 px-2 rounded-2xl flex flex-col items-center justify-center shadow-md active:scale-95 transition">
                                             <span className="font-bold text-lg mb-1">同客續加</span>
@@ -792,11 +836,10 @@ ${details}
                                         </span>
                                     </div>
                                 </div>
-                                {orders.length > 0 && <div className="text-center text-xs text-latte-400 opacity-70">剛加入: {orders[0].customer} - {orders[0].productName} (${orders[0].customerTotalTWD})</div>}
+                                {orders.length > 0 && <div className="text-center text-xs text-latte-400 opacity-70">剛加入/更新: {orders[0].customer} - {orders[0].productName} (最新總量: {orders[0].qty})</div>}
                             </div>
                         )}
 
-                        {/* 2. List Tab */}
                         {activeTab === 'list' && (
                             <div className="space-y-3 animate-in">
                                 <div className="relative mb-4"><input type="text" placeholder="搜尋..." value={searchQuery || ''} onChange={e => setSearchQuery(e.target.value)} className="w-full bg-white rounded-xl p-3 pl-10 border border-cream-200 outline-none focus:border-latte-400 text-latte-800" /><Search size={16} className="absolute left-3 top-3.5 text-latte-300" /></div>
@@ -818,7 +861,6 @@ ${details}
                             </div>
                         )}
 
-                        {/* 3. Customers Tab */}
                         {activeTab === 'customers' && (
                             <div className="space-y-2 animate-in">
                                 <div className="flex justify-between items-center px-2 mb-2">
@@ -849,8 +891,6 @@ ${details}
                                     const isSelected = selectedForExport.has(c.name);
                                     return (
                                         <div key={c.name} onClick={(e) => { e.stopPropagation(); setSelectedCustomerName(c.name); }} className={`rounded-3xl p-5 shadow-soft border flex justify-between items-center cursor-pointer mb-2 active:scale-[0.99] transition-all relative ${isSelected ? 'bg-latte-50 border-latte-300' : 'bg-white border-cream-200 hover:border-latte-200'}`}>
-                                            
-                                            {/* Selection Checkbox Area */}
                                             <div 
                                                 className="absolute left-0 top-0 bottom-0 w-12 flex items-center justify-center z-10"
                                                 onClick={(e) => { e.stopPropagation(); toggleExportSelection(c.name); }}
@@ -860,7 +900,7 @@ ${details}
 
                                             <div className="flex items-center gap-4 pl-8">
                                                 <div className="w-12 h-12 bg-cream-100 text-latte-600 rounded-full flex items-center justify-center font-bold border border-cream-200 text-lg shadow-sm">{c.name[0]}</div>
-                                                <div><h4 className="font-bold text-latte-800 text-lg">{c.name}</h4><p className="text-xs text-latte-400">{c.orderCount} 筆訂單</p></div>
+                                                <div><h4 className="font-bold text-latte-800 text-lg">{c.name}</h4><p className="text-xs text-latte-400">共 {c.orderCount} 顆</p></div>
                                             </div>
                                             <div className="text-right"><p className="font-black text-latte-500 text-lg">${c.totalSpent.toLocaleString()}</p><div className="text-[10px] text-latte-300 bg-cream-50 px-2 py-0.5 rounded-lg inline-block">點擊查看</div></div>
                                         </div>
@@ -869,10 +909,8 @@ ${details}
                             </div>
                         )}
 
-                        {/* 4. Dashboard Tab */}
                         {activeTab === 'dashboard' && (
                             <div className="grid grid-cols-3 gap-3 animate-in">
-                                {/* === [新增] 日期區間篩選器 === */}
                                 <div className="col-span-3 bg-white p-3 rounded-2xl shadow-sm border border-cream-200 flex gap-2 items-center mb-1">
                                     <Calendar size={16} className="text-latte-400 ml-1"/>
                                     <input type="date" className="flex-1 bg-cream-50 text-xs p-2 rounded-xl outline-none text-latte-700 border border-cream-200 font-bold" value={dateRange.start} onChange={e => setDateRange(p => ({...p, start: e.target.value}))} />
@@ -912,7 +950,6 @@ ${details}
 
                     {/* --- Modals --- */}
                     
-                    {/* Dashboard Detail */}
                     {showDashboardDetail && (
                         <div className="fixed inset-0 bg-latte-900/40 backdrop-blur-[2px] z-[200] flex items-center justify-center p-4">
                             <div className="bg-white rounded-[30px] w-full max-w-md h-[85vh] flex flex-col shadow-2xl animate-in">
@@ -951,7 +988,6 @@ ${details}
                         </div>
                     )}
 
-                    {/* Status Update */}
                     {statusUpdateData && (
                         <div className="fixed inset-0 z-[260] flex items-center justify-center p-4 bg-latte-900/40 backdrop-blur-sm animate-in">
                             <div className="bg-white rounded-[30px] w-full max-w-sm p-6 shadow-2xl space-y-4 flex flex-col">
@@ -962,7 +998,6 @@ ${details}
                         </div>
                     )}
 
-                    {/* Global Settings */}
                     {showGlobalSettings && (
                         <div className="fixed inset-0 bg-latte-900/40 backdrop-blur-[2px] z-[200] flex items-center justify-center p-4">
                             <div className="bg-white rounded-[30px] w-full max-w-md p-6 space-y-5 shadow-2xl animate-in max-h-[85vh] overflow-y-auto">
@@ -975,7 +1010,6 @@ ${details}
                         </div>
                     )}
 
-                    {/* Price Editor */}
                     {showPriceEditor && (
                         <div className="fixed inset-0 bg-latte-900/40 backdrop-blur-[2px] z-[200] flex items-center justify-center p-4">
                             <div className="bg-white rounded-[30px] w-full max-w-md p-6 space-y-4 shadow-2xl animate-in max-h-[85vh] flex flex-col">
@@ -986,7 +1020,6 @@ ${details}
                         </div>
                     )}
 
-                    {/* Customer Detail (Live Data) */}
                     {activeCustomerDetail && (
                         <div className="fixed inset-0 bg-latte-900/40 backdrop-blur-[2px] z-[160] flex items-end md:items-center justify-center p-0 md:p-4 animate-in">
                             <div className="bg-white rounded-t-[30px] md:rounded-3xl w-full max-w-md h-[85vh] flex flex-col shadow-2xl">
@@ -1020,7 +1053,6 @@ ${details}
                         </div>
                     )}
 
-                    {/* Release Confirm Modal */}
                     {releasingOrder && (
                         <div className="fixed inset-0 z-[260] flex items-center justify-center p-4 bg-latte-900/40 backdrop-blur-sm animate-in">
                             <div className="bg-white rounded-[30px] w-full max-w-sm p-6 shadow-2xl space-y-4 flex flex-col">
@@ -1037,7 +1069,6 @@ ${details}
                         </div>
                     )}
 
-                    {/* Transfer Modal */}
                     {transferringOrder && (
                         <div className="fixed inset-0 z-[260] flex items-center justify-center p-4 bg-latte-900/40 backdrop-blur-sm animate-in">
                             <div className="bg-white rounded-[30px] w-full max-w-sm p-6 shadow-2xl space-y-4 flex flex-col">
@@ -1045,14 +1076,13 @@ ${details}
                                 <div className="space-y-3">
                                     <div><p className="text-sm text-latte-500 mb-1">商品：<strong>{transferringOrder.productName}</strong></p><p className="text-xs text-latte-400">持有：{transferringOrder.qty} 個</p></div>
                                     <div className="bg-cream-50 p-3 rounded-xl border border-cream-200 flex justify-between items-center"><span className="text-sm font-bold text-latte-600">數量</span><div className="flex items-center gap-3"><button onClick={()=>setTransferQty(Math.max(1, transferQty-1))} className="w-8 h-8 rounded-full bg-white shadow flex items-center justify-center text-latte-400 active:scale-90" disabled={transferQty<=1}><Minus size={14}/></button><span className="text-lg font-black w-8 text-center text-latte-800">{transferQty}</span><button onClick={()=>setTransferQty(Math.min(transferringOrder.qty, transferQty+1))} className="w-8 h-8 rounded-full bg-latte-500 text-white shadow flex items-center justify-center active:scale-90" disabled={transferQty>=transferringOrder.qty}><Plus size={14}/></button></div></div>
-                                    <div><p className="text-sm text-latte-500 mb-2">對象：</p><input list="cl_trans" className="w-full bg-cream-50 border border-cream-200 p-3 rounded-xl outline-none font-bold text-latte-800" value={transferTarget || ''} onChange={e => setTransferTarget(e.target.value)} placeholder="輸入新顧客名稱" list="hist-customers" autoComplete="off"/><datalist id="cl_trans">{history.customers.map((c,i)=><option key={`${c}-${i}`} value={c}/>)}</datalist></div>
+                                    <div><p className="text-sm text-latte-500 mb-2">對象：</p><input list="cl_trans" className="w-full bg-cream-50 border border-cream-200 p-3 rounded-xl outline-none font-bold text-latte-800" value={transferTarget || ''} onChange={e => setTransferTarget(e.target.value)} placeholder="輸入新顧客名稱" autoComplete="off"/><datalist id="cl_trans">{history.customers.map((c,i)=><option key={`${c}-${i}`} value={c}/>)}</datalist></div>
                                 </div>
                                 <button onClick={handleTransferOrder} disabled={!transferTarget} className="w-full bg-latte-600 text-white py-3.5 rounded-2xl font-bold shadow-lg active:scale-95 transition disabled:opacity-50">確認轉讓</button>
                             </div>
                         </div>
                     )}
 
-                    {/* App Confirm (Replace Native Alerts) */}
                     {confirmConfig && (
                         <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-latte-900/40 backdrop-blur-sm animate-in">
                             <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl space-y-4 border border-cream-200">
@@ -1063,7 +1093,6 @@ ${details}
                         </div>
                     )}
 
-                    {/* Order Edit Modal */}
                     {editingOrder && (
                         <div className="fixed inset-0 z-[250] flex items-center justify-center p-4 bg-latte-900/40 backdrop-blur-sm animate-in">
                             <div className="bg-white rounded-[30px] w-full max-w-sm p-6 shadow-2xl space-y-4 flex flex-col">
@@ -1171,7 +1200,6 @@ ${details}
                         </div>
                     )}
 
-                    {/* Hidden Receipt (for Image Generation) */}
                     {exportTargetCustomer && (
                         <div id="hidden-receipt-container">
                             <div className="receipt-card">
@@ -1194,3 +1222,4 @@ ${details}
     </script>
 </body>
 </html>
+
