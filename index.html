@@ -66,7 +66,8 @@
             User, ListOrdered, Tag, CheckSquare, Trash2, Edit, Save, 
             Image as ImageIcon, Download, Loader2, Coins, Circle, ShoppingCart, Settings,
             Cloud, Upload, FileJson, FileSpreadsheet, RefreshCcw, Minus, ArrowRightCircle, Megaphone, Undo2, History, Package, RotateCcw,
-            FileArchive, Square, Clock, Calendar
+            FileArchive, Square, Clock, Calendar,
+            Database, UploadCloud, DownloadCloud, AlertTriangle
         } from 'https://esm.sh/lucide-react@0.263.1?dev';
 
         const App = () => {
@@ -248,6 +249,21 @@
                 return Object.values(map).sort((a,b) => b.totalSpent - a.totalSpent);
             }, [orders]);
 
+            const productList = useMemo(() => {
+                const map = {};
+                orders.forEach(o => {
+                    const cleanName = o.productName ? o.productName.trim() : 'Unknown';
+                    const cleanVariant = o.variant ? o.variant.trim() : 'Unknown';
+                    const key = `${cleanName}___${cleanVariant}`;
+                    if (!map[key]) {
+                        map[key] = { key, productName: cleanName, variant: cleanVariant, totalQty: 0, items: [] };
+                    }
+                    map[key].totalQty += o.qty;
+                    map[key].items.push(o);
+                });
+                return Object.values(map).sort((a,b) => b.totalQty - a.totalQty);
+            }, [orders]);
+
             const activeCustomerDetail = useMemo(() => {
                 if (!selectedCustomerName) return null;
                 return customerList.find(c => c.name === selectedCustomerName) || { name: selectedCustomerName, totalSpent: 0, items: [] };
@@ -255,6 +271,14 @@
 
             const filteredCustomers = customerList.filter(c => c.name.includes(searchQuery));
             
+            const filteredProducts = productList.filter(p => p.productName.includes(searchQuery) || p.variant.includes(searchQuery));
+            
+            const [selectedProductKey, setSelectedProductKey] = useState(null);
+            const activeProductDetail = useMemo(() => {
+                if (!selectedProductKey) return null;
+                return productList.find(p => p.key === selectedProductKey) || null;
+            }, [productList, selectedProductKey]);
+
             const stats = useMemo(() => {
                 const totalRevenue = orders.reduce((acc, o) => acc + o.customerTotalTWD, 0);
                 const totalJPY = orders.reduce((acc, o) => acc + o.gashaTotalJPY, 0);
@@ -708,7 +732,7 @@ ${details}
 
                     <div className="bg-white/90 backdrop-blur-sm border-b border-cream-200 sticky top-[60px] z-40">
                          <div className="flex max-w-2xl mx-auto overflow-x-auto no-scrollbar">
-                            {[{id:'input',l:'連線',i:Plus},{id:'list',l:'清單',i:ListOrdered},{id:'customers',l:'顧客',i:Users},{id:'dashboard',l:'儀表板',i:LayoutDashboard}].map(t => (
+                            {[{id:'input',l:'連線',i:Plus},{id:'list',l:'清單',i:ListOrdered},{id:'products',l:'商品',i:ShoppingBag},{id:'customers',l:'顧客',i:Users},{id:'dashboard',l:'儀表板',i:LayoutDashboard}].map(t => (
                                 <button key={t.id} onClick={() => {setActiveTab(t.id); setSearchQuery('')}} className={`flex-1 py-4 px-2 flex flex-col items-center gap-1 text-[11px] font-bold transition-all ${activeTab === t.id ? 'text-latte-500 border-b-2 border-latte-500 bg-cream-50' : 'text-latte-300'}`}>
                                     <div className="relative"><t.i size={20}/>{t.id === 'list' && stats.pendingPick > 0 && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-rose-500 rounded-full border border-white"></span>}</div>{t.l}
                                 </button>
@@ -856,8 +880,31 @@ ${details}
                             </div>
                         )}
 
+                        {activeTab === 'products' && (
+                            <div className="space-y-3 animate-in">
+                                <div className="relative mb-4"><input type="text" placeholder="搜尋商品名稱或款式..." value={searchQuery || ''} onChange={e => setSearchQuery(e.target.value)} className="w-full bg-white rounded-xl p-3 pl-10 border border-cream-200 outline-none focus:border-latte-400 text-latte-800" /><Search size={16} className="absolute left-3 top-3.5 text-latte-300" /></div>
+                                {filteredProducts.map(p => (
+                                    <div key={p.key} onClick={() => setSelectedProductKey(p.key)} className="bg-white p-4 rounded-3xl shadow-soft border border-cream-200 hover:border-latte-300 transition-all cursor-pointer active:scale-[0.99] flex justify-between items-center">
+                                        <div className="flex items-center gap-4">
+                                            <div className="w-12 h-12 bg-cream-100 text-latte-600 rounded-full flex items-center justify-center font-bold border border-cream-200 shadow-sm"><Package size={20}/></div>
+                                            <div>
+                                                <h4 className="font-bold text-latte-800 text-lg">{p.productName}</h4>
+                                                <p className="text-xs text-latte-500 font-bold mt-0.5">{p.variant}</p>
+                                            </div>
+                                        </div>
+                                        <div className="text-right">
+                                            <div className="text-xl font-black text-latte-600">{p.totalQty} <span className="text-sm font-bold text-latte-400">個</span></div>
+                                            <div className="text-[10px] text-latte-300 bg-cream-50 px-2 py-0.5 rounded-lg inline-block mt-1">查看購買人</div>
+                                        </div>
+                                    </div>
+                                ))}
+                                {filteredProducts.length === 0 && <div className="text-center text-latte-300 py-10">沒有符合的商品</div>}
+                            </div>
+                        )}
+
                         {activeTab === 'customers' && (
-                            <div className="space-y-2 animate-in">
+                            <div className="space-y-3 animate-in">
+                                <div className="relative"><input type="text" placeholder="搜尋顧客名稱..." value={searchQuery || ''} onChange={e => setSearchQuery(e.target.value)} className="w-full bg-white rounded-xl p-3 pl-10 border border-cream-200 outline-none focus:border-latte-400 text-latte-800" /><Search size={16} className="absolute left-3 top-3.5 text-latte-300" /></div>
                                 <div className="flex justify-between items-center px-2 mb-2">
                                     <div className="flex items-center gap-3">
                                         <button 
@@ -1002,12 +1049,57 @@ ${details}
 
                     {showGlobalSettings && (
                         <div className="fixed inset-0 bg-latte-900/40 backdrop-blur-[2px] z-[200] flex items-center justify-center p-4">
-                            <div className="bg-white rounded-[30px] w-full max-w-md p-6 space-y-5 shadow-2xl animate-in max-h-[85vh] overflow-y-auto">
-                                <div className="flex justify-between items-center border-b border-cream-200 pb-3"><h3 className="font-bold text-latte-800 text-lg flex items-center gap-2"><Settings size={20}/> 系統設定</h3><button onClick={()=>setShowGlobalSettings(false)} className="w-8 h-8 rounded-full bg-cream-200 text-latte-500 flex items-center justify-center"><X size={18}/></button></div>
-                                <div className="space-y-3"><h4 className="text-xs font-bold text-latte-400 uppercase">Cloud Sync</h4><input type="text" placeholder="Apps Script URL" className="w-full bg-cream-50 border border-cream-200 p-3 rounded-xl outline-none text-latte-800 text-xs focus:border-latte-400" value={apiUrl} onChange={e=>setApiUrl(e.target.value)}/><div className="grid grid-cols-2 gap-2"><button onClick={handleCloudUpload} disabled={isSyncing} className="bg-indigo-500 text-white py-3 rounded-xl font-bold shadow-md shadow-indigo-200 active:scale-95 transition flex flex-col items-center justify-center gap-1 disabled:opacity-50">{isSyncing?<Loader2 size={18} className="animate-spin"/>:<Cloud size={18}/>}<span className="text-xs">備份</span></button><button onClick={handleCloudDownload} disabled={isSyncing} className="bg-emerald-500 text-white py-3 rounded-xl font-bold shadow-md shadow-emerald-200 active:scale-95 transition flex flex-col items-center justify-center gap-1 disabled:opacity-50">{isSyncing?<Loader2 size={18} className="animate-spin"/>:<RefreshCcw size={18}/>}<span className="text-xs">還原</span></button></div></div>
-                                <div className="space-y-3 pt-2 border-t border-cream-100"><h4 className="text-xs font-bold text-latte-400 uppercase">資料管理</h4><button onClick={handleExportCSV} className="w-full bg-white border border-latte-200 text-latte-700 py-3 rounded-xl font-bold shadow-sm flex items-center justify-center gap-2 active:scale-95 transition"><FileSpreadsheet size={18} className="text-green-600"/> 匯出 CSV</button><div className="grid grid-cols-2 gap-2"><button onClick={handleExportBackup} className="bg-latte-100 text-latte-600 py-3 rounded-xl font-bold flex items-center justify-center gap-1 active:scale-95 transition"><FileJson size={16}/> 備份</button><label className="bg-latte-100 text-latte-600 py-3 rounded-xl font-bold flex items-center justify-center gap-1 active:scale-95 transition cursor-pointer"><Upload size={16}/> 還原<input type="file" className="hidden" ref={fileInputRef} onChange={handleImportBackup} accept=".json"/></label></div>
-                                <button onClick={handleClearHistory} className="w-full bg-latte-100 text-latte-600 py-3 rounded-xl font-bold mt-2 flex items-center justify-center gap-2 active:scale-95 transition hover:bg-latte-200"><History size={18}/> 清除歷史紀錄</button>
-                                <button onClick={handleClearAllData} className="w-full bg-rose-50 border border-rose-100 text-rose-500 py-3 rounded-xl font-bold mt-2 flex items-center justify-center gap-2 active:scale-95 transition hover:bg-rose-100"><Trash2 size={18}/> 清除所有訂單</button></div>
+                            <div className="bg-white rounded-[30px] w-full max-w-md p-6 space-y-6 shadow-2xl animate-in max-h-[85vh] overflow-y-auto">
+                                {/* Header */}
+                                <div className="flex justify-between items-center pb-3 border-b border-cream-200/60">
+                                    <h3 className="font-bold text-latte-800 text-[19px] flex items-center gap-2"><Settings size={22}/> 系統設定</h3>
+                                    <button onClick={()=>setShowGlobalSettings(false)} className="w-9 h-9 rounded-full bg-[#EBE0D6]/50 text-latte-500 flex items-center justify-center hover:bg-[#EBE0D6] transition active:scale-95"><X size={18}/></button>
+                                </div>
+
+                                {/* Section 1: CLOUD SYNC */}
+                                <div>
+                                    <h4 className="text-[13px] font-black text-latte-400 tracking-wider uppercase mb-3">CLOUD SYNC</h4>
+                                    <input type="text" placeholder="https://script.google.com/macros/s/..." className="w-full bg-[#FCF4E9]/40 border border-[#EBE0D6] p-3.5 rounded-xl outline-none text-latte-800 text-sm focus:border-latte-400 focus:bg-white transition-colors mb-4" value={apiUrl} onChange={e=>setApiUrl(e.target.value)}/>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <button onClick={handleCloudUpload} disabled={isSyncing} className="bg-[#6B6CFA] hover:bg-[#5859db] text-white py-4 rounded-xl font-bold shadow-sm shadow-indigo-200/50 active:scale-95 transition flex flex-col items-center justify-center gap-1.5 disabled:opacity-50">
+                                            {isSyncing?<Loader2 size={22} className="animate-spin"/>:<Cloud size={22}/>}
+                                            <span className="text-[15px] tracking-widest">備份</span>
+                                        </button>
+                                        <button onClick={handleCloudDownload} disabled={isSyncing} className="bg-[#1EB980] hover:bg-[#189b6b] text-white py-4 rounded-xl font-bold shadow-sm shadow-emerald-200/50 active:scale-95 transition flex flex-col items-center justify-center gap-1.5 disabled:opacity-50">
+                                            {isSyncing?<Loader2 size={22} className="animate-spin"/>:<RefreshCcw size={22}/>}
+                                            <span className="text-[15px] tracking-widest">還原</span>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Section 2: 資料管理 */}
+                                <div className="space-y-4">
+                                    <h4 className="text-[13px] font-black text-latte-400 tracking-wider uppercase pt-2">資料管理</h4>
+                                    
+                                    <button onClick={handleExportCSV} className="w-full bg-white border border-[#EBE0D6] text-[#5E4B41] py-3.5 rounded-xl font-black text-[16px] shadow-sm flex items-center justify-center gap-2 active:scale-95 transition hover:bg-cream-50">
+                                        <FileSpreadsheet size={18} className="text-[#1EB980]"/> 匯出 CSV
+                                    </button>
+
+                                    <div className="grid grid-cols-2 gap-3 py-1">
+                                        <button onClick={handleExportBackup} className="text-[#8C6A5D] py-2 font-bold flex items-center justify-center gap-2 active:scale-95 transition hover:text-[#5E4B41]">
+                                            <FileJson size={18}/> <span className="text-[16px]">備份</span>
+                                        </button>
+                                        <label className="text-[#8C6A5D] py-2 font-bold flex items-center justify-center gap-2 active:scale-95 transition hover:text-[#5E4B41] cursor-pointer">
+                                            <Upload size={18}/> <span className="text-[16px]">還原</span>
+                                            <input type="file" className="hidden" ref={fileInputRef} onChange={handleImportBackup} accept=".json"/>
+                                        </label>
+                                    </div>
+
+                                    <div className="flex flex-col gap-3">
+                                        <button onClick={handleClearHistory} className="w-full text-[#8C6A5D] py-3 font-bold flex items-center justify-center gap-2 active:scale-95 transition hover:bg-cream-50 rounded-xl">
+                                            <History size={20}/> <span className="text-[16px]">清除歷史紀錄</span>
+                                        </button>
+
+                                        <button onClick={handleClearAllData} className="w-full bg-[#FFF0F2] text-[#F43F5E] py-4 rounded-xl font-bold flex items-center justify-center gap-2 active:scale-95 transition hover:bg-[#FFE4E6]">
+                                            <Trash2 size={20}/> <span className="text-[16px]">清除所有訂單</span>
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     )}
@@ -1047,6 +1139,37 @@ ${details}
                                                     <button onClick={(e)=>{e.stopPropagation(); handleCancelRelease(item.id)}} className="p-2 bg-amber-100 text-amber-600 rounded-lg border border-amber-200 hover:bg-cream-100 transition"><Undo2 size={16}/></button>
                                                 )}
                                                 <button onClick={(e)=>{e.stopPropagation(); setTransferringOrder(item); setTransferTarget(''); setTransferQty(1);}} className="p-2 bg-cream-100 text-latte-500 rounded-lg border border-cream-200 hover:bg-latte-200 transition"><ArrowRightCircle size={16}/></button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {activeProductDetail && (
+                        <div className="fixed inset-0 bg-latte-900/40 backdrop-blur-[2px] z-[160] flex items-end md:items-center justify-center p-0 md:p-4 animate-in">
+                            <div className="bg-white rounded-t-[30px] md:rounded-3xl w-full max-w-md h-[85vh] flex flex-col shadow-2xl">
+                                <div className="p-6 border-b border-cream-200 flex justify-between items-start bg-cream-50 rounded-t-[30px] md:rounded-t-3xl">
+                                    <div>
+                                        <h3 className="text-xl font-bold text-latte-800 flex items-center gap-2"><Package size={20}/> {activeProductDetail.productName}</h3>
+                                        <div className="text-xs text-latte-500 font-bold mt-2 bg-white px-2 py-1 rounded-lg border border-cream-200 inline-block shadow-sm">款式: {activeProductDetail.variant} | 總數量: {activeProductDetail.totalQty}</div>
+                                    </div>
+                                    <div className="flex gap-2"><button onClick={()=>setSelectedProductKey(null)} className="p-2.5 bg-cream-200 text-latte-600 rounded-xl active:scale-95"><X size={18}/></button></div>
+                                </div>
+                                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                                    {activeProductDetail.items.map((item)=>(
+                                        <div key={item.id} className={`flex justify-between items-center p-4 border rounded-2xl shadow-sm transition-all cursor-pointer ${item.isReleasing ? 'bg-amber-50 border-amber-200' : 'bg-white border-cream-200 hover:border-latte-300 active:scale-[0.99]'}`} onClick={(e)=>{e.stopPropagation(); setEditingOrder(item);}}>
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-10 h-10 bg-cream-100 text-latte-600 rounded-full flex items-center justify-center font-bold border border-cream-200 text-sm shadow-sm">{item.customer[0]}</div>
+                                                <div>
+                                                    <div className="font-bold text-sm text-latte-800">{item.customer}</div>
+                                                    <div className="text-xs text-latte-400 mt-1 font-bold">{item.ecoFeeTotal > 0 && <span className="text-emerald-600 mr-1">(含環保)</span>}{item.isReleasing && <span className="text-amber-600">📢 釋出中</span>}</div>
+                                                </div>
+                                            </div>
+                                            <div className="text-right">
+                                                <div className="text-xs text-latte-400 mb-1">x {item.qty}</div>
+                                                <div className="text-sm text-latte-600 font-black">${item.customerTotalTWD}</div>
                                             </div>
                                         </div>
                                     ))}
