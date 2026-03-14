@@ -67,7 +67,7 @@
             User, ListOrdered, Tag, CheckSquare, Trash2, Edit, Save, 
             Image as ImageIcon, Download, Loader2, Coins, Circle, ShoppingCart, Settings,
             Cloud, Upload, FileJson, FileSpreadsheet, RefreshCcw, Minus, ArrowRightCircle, Megaphone, Undo2, History, Package, RotateCcw,
-            FileArchive, Square, Clock, Calendar,
+            FileArchive, Square, Clock, Calendar, Layers,
             Database, UploadCloud, DownloadCloud, AlertTriangle
         } from 'https://esm.sh/lucide-react@0.263.1';
 
@@ -167,6 +167,7 @@
 
             const [activeTab, setActiveTab] = useState('input'); 
             const [searchQuery, setSearchQuery] = useState('');
+            const [listViewMode, setListViewMode] = useState('customer'); // NEW: 'customer' | 'master'
             const [selectedCustomerName, setSelectedCustomerName] = useState(null); 
             const [notification, setNotification] = useState(null);
             
@@ -273,7 +274,14 @@
                 return customerList.find(c => c.name === selectedCustomerName) || { name: selectedCustomerName, totalSpent: 0, items: [] };
             }, [customerList, selectedCustomerName]);
 
-            const filteredCustomers = customerList.filter(c => c.name.includes(searchQuery));
+            // 🌟 深度搜尋：比對顧客名稱，或其購買的商品名稱與款式
+            const filteredCustomers = useMemo(() => {
+                return customerList.filter(c => 
+                    c.name.includes(searchQuery) ||
+                    c.items.some(i => i.productName.includes(searchQuery) || (i.variant && i.variant.includes(searchQuery)))
+                );
+            }, [customerList, searchQuery]);
+
             const filteredProducts = productList.filter(p => p.productName.includes(searchQuery) || p.variant.includes(searchQuery));
             
             const [selectedProductKey, setSelectedProductKey] = useState(null);
@@ -293,6 +301,25 @@
             }, [orders]);
 
             const filteredOrders = orders.filter(o => o.customer.includes(searchQuery) || o.productName.includes(searchQuery) || (o.variant && o.variant.includes(searchQuery)));
+
+            // 🌟 清單分頁專用：依顧客分組
+            const listCustomers = useMemo(() => {
+                const map = {};
+                filteredOrders.forEach(o => {
+                    if (!map[o.customer]) map[o.customer] = { name: o.customer, items: [], total: 0 };
+                    map[o.customer].items.push(o);
+                    map[o.customer].total += o.customerTotalTWD;
+                });
+                return Object.values(map).sort((a,b) => a.name.localeCompare(b.name, 'zh-TW'));
+            }, [filteredOrders]);
+
+            // 🌟 清單分頁專用：依商品(總表)攤平排序
+            const masterListItems = useMemo(() => {
+                return [...filteredOrders].sort((a,b) => {
+                    if (a.productName !== b.productName) return a.productName.localeCompare(b.productName, 'zh-TW');
+                    return (a.variant||'').localeCompare(b.variant||'', 'zh-TW');
+                });
+            }, [filteredOrders]);
 
             const dashboardOrders = useMemo(() => {
                 return orders.filter(o => {
@@ -837,22 +864,92 @@
 
                         {activeTab === 'list' && (
                             <div className="space-y-3 animate-in">
-                                <div className="relative mb-4"><input type="text" placeholder="搜尋..." value={searchQuery || ''} onChange={e => setSearchQuery(e.target.value)} className="w-full bg-white rounded-xl p-3 pl-10 border border-cream-200 outline-none focus:border-latte-400 text-latte-800" /><Search size={16} className="absolute left-3 top-3.5 text-latte-300" /></div>
-                                {filteredOrders.map(o => (
-                                    <div key={o.id} onClick={() => setEditingOrder(o)} className={`bg-white p-4 rounded-3xl shadow-soft border border-cream-200 transition-all cursor-pointer hover:border-latte-300 active:scale-[0.99] ${o.isPicked ? 'opacity-60 bg-cream-50' : ''}`}>
-                                        <div className="flex justify-between items-start mb-3">
-                                            <div>
-                                                <div className="font-bold text-latte-800 text-lg">{o.customer}</div>
-                                                <div className="text-xs text-latte-500 font-bold">{o.productName} <span className="text-latte-300 font-normal">({o.variant})</span></div>
-                                                <div className="mt-1 text-[10px] text-latte-400 flex items-center gap-1 font-medium"><Clock size={12}/> {o.date} {o.time || ''}</div>
-                                                <div className="mt-1 text-xs bg-cream-100 inline-block px-2 py-0.5 rounded text-latte-600 font-bold border border-cream-200">¥{o.unitPriceJPY} x {o.qty}{o.ecoFeeTotal > 0 && <span className="text-emerald-600 ml-1">+環保</span>}</div>
+                                <div className="relative mb-4">
+                                    <input type="text" placeholder="搜尋顧客、商品名稱或款式..." value={searchQuery || ''} onChange={e => setSearchQuery(e.target.value)} className="w-full bg-white rounded-xl p-3 pl-10 border border-cream-200 outline-none focus:border-latte-400 text-latte-800" />
+                                    <Search size={16} className="absolute left-3 top-3.5 text-latte-300" />
+                                </div>
+                                
+                                {/* 🌟 新增：視角切換器 */}
+                                <div className="flex bg-cream-100 p-1 rounded-2xl mb-4 shadow-inner-soft">
+                                    <button
+                                        onClick={() => setListViewMode('customer')}
+                                        className={`flex-1 py-2 text-sm font-bold rounded-xl transition-all ${listViewMode === 'customer' ? 'bg-white text-latte-600 shadow-sm' : 'text-latte-400 hover:text-latte-500'}`}
+                                    >
+                                        <User size={16} className="inline mr-1 -mt-0.5"/> 依顧客
+                                    </button>
+                                    <button
+                                        onClick={() => setListViewMode('master')}
+                                        className={`flex-1 py-2 text-sm font-bold rounded-xl transition-all ${listViewMode === 'master' ? 'bg-white text-latte-600 shadow-sm' : 'text-latte-400 hover:text-latte-500'}`}
+                                    >
+                                        <ListOrdered size={16} className="inline mr-1 -mt-0.5"/> 依商品 (總表)
+                                    </button>
+                                </div>
+
+                                {listViewMode === 'customer' ? (
+                                    <div className="space-y-3">
+                                        {listCustomers.map(c => (
+                                            <div key={c.name} className="bg-white p-5 rounded-3xl shadow-soft border border-cream-200">
+                                                <div className="flex justify-between items-center mb-4 border-b border-cream-100 pb-3">
+                                                    <h3 className="font-bold text-latte-800 text-lg flex items-center gap-2"><User size={20} className="text-latte-400"/> {c.name}</h3>
+                                                    <span className="text-sm font-black text-latte-500 bg-cream-50 px-3 py-1 rounded-lg border border-cream-200">${c.total.toLocaleString()}</span>
+                                                </div>
+                                                <div className="space-y-2">
+                                                    {c.items.map(o => (
+                                                        <div key={o.id} className={`flex justify-between items-center p-3 rounded-2xl border cursor-pointer transition-colors ${o.isPicked ? 'bg-cream-50/40 border-cream-100 opacity-60' : 'bg-cream-50 hover:bg-cream-100 border-cream-200'}`} onClick={() => setEditingOrder(o)}>
+                                                            <div className="flex-1">
+                                                                <div className="font-bold text-sm text-latte-800">{o.productName}</div>
+                                                                <div className="text-[10px] text-latte-500 font-bold mt-0.5">{o.variant}</div>
+                                                            </div>
+                                                            <div className="flex items-center gap-4">
+                                                                <div className="text-sm font-black text-latte-600 bg-white px-2 py-1 rounded-lg shadow-sm border border-cream-100">x {o.qty}</div>
+                                                                <div className="flex gap-1.5">
+                                                                    <button onClick={(e) => { e.stopPropagation(); toggleStatus(o.id, 'isPurchased'); }} className={`w-8 h-8 rounded-xl flex items-center justify-center border transition-all ${o.isPurchased ? 'bg-amber-100 text-amber-700 border-amber-200 shadow-sm' : 'bg-white text-latte-300 border-cream-200 hover:border-latte-300'}`} title="核對"><CheckCircle2 size={16}/></button>
+                                                                    <button onClick={(e) => { e.stopPropagation(); toggleStatus(o.id, 'isPicked'); }} className={`w-8 h-8 rounded-xl flex items-center justify-center border transition-all ${o.isPicked ? 'bg-emerald-100 text-emerald-700 border-emerald-200 shadow-sm' : 'bg-white text-latte-300 border-cream-200 hover:border-latte-300'}`} title="入袋"><ShoppingBag size={16}/></button>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
                                             </div>
-                                            <div className="text-right"><div className="text-xl font-black text-latte-600">${o.customerTotalTWD}</div><div className="flex gap-2 justify-end mt-1"><button onClick={(e) => { e.stopPropagation(); deleteOrder(o.id); }} className="text-cream-300 p-2 hover:text-rose-400 bg-cream-50 rounded-lg active:scale-95"><Trash2 size={16}/></button></div></div>
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-3"><button onClick={(e) => { e.stopPropagation(); toggleStatus(o.id, 'isPurchased'); }} className={`text-xs py-2 rounded-xl font-bold flex items-center justify-center gap-1 border ${o.isPurchased ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-cream-50 text-latte-300 border-cream-200'}`}><CheckCircle2 size={14}/> {o.isPurchased ? '已核對' : '待核對'}</button><button onClick={(e) => { e.stopPropagation(); toggleStatus(o.id, 'isPicked'); }} className={`text-xs py-2 rounded-xl font-bold flex items-center justify-center gap-1 border ${o.isPicked ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-cream-50 text-latte-300 border-cream-200'}`}><ShoppingBag size={14}/> {o.isPicked ? '已入袋' : '待入袋'}</button></div>
+                                        ))}
+                                        {listCustomers.length === 0 && <div className="text-center text-latte-300 py-10 font-bold">沒有符合的訂單</div>}
                                     </div>
-                                ))}
-                                {filteredOrders.length === 0 && <div className="text-center text-latte-300 py-10">沒有符合的訂單</div>}
+                                ) : (
+                                    <div className="bg-white rounded-3xl shadow-soft border border-cream-200 overflow-hidden mx-1">
+                                        <div className="p-3 bg-cream-50 border-b border-cream-200 flex justify-between items-center">
+                                            <span className="text-sm font-bold text-latte-600 flex items-center gap-1"><Layers size={16}/> 待核對/入袋總表</span>
+                                            <span className="text-xs text-latte-400 font-bold">共 {masterListItems.length} 筆明細</span>
+                                        </div>
+                                        <div className="divide-y divide-cream-100">
+                                            {masterListItems.length === 0 ? (
+                                                <div className="p-8 text-center text-latte-300 text-sm font-bold">目前無符合的商品</div>
+                                            ) : (
+                                                masterListItems.map(o => (
+                                                    <div key={o.id} className={`p-4 flex flex-col gap-2 transition-colors ${o.isPicked ? 'bg-cream-50/40 opacity-70' : 'hover:bg-cream-50/50'}`}>
+                                                        <div className="flex justify-between items-center">
+                                                            <div className="flex-1 min-w-0">
+                                                                <div className="font-bold text-latte-800 text-sm truncate">{o.productName}</div>
+                                                                <div className="text-xs text-latte-400 font-bold flex items-center gap-2 mt-1">
+                                                                    <span className="bg-cream-100 px-1.5 py-0.5 rounded text-latte-500 border border-cream-200">{o.variant}</span>
+                                                                    <span className="text-latte-600 flex items-center gap-0.5"><User size={12}/> {o.customer}</span>
+                                                                </div>
+                                                            </div>
+                                                            <div className="flex items-center gap-3 shrink-0">
+                                                                <div className="bg-white px-3 py-1.5 rounded-xl border border-cream-200 shadow-sm text-base font-black text-latte-700 cursor-pointer hover:bg-cream-50 transition" onClick={() => setEditingOrder(o)}>
+                                                                    x {o.qty}
+                                                                </div>
+                                                                <div className="flex gap-1.5">
+                                                                    <button onClick={() => toggleStatus(o.id, 'isPurchased')} className={`w-9 h-9 rounded-xl flex items-center justify-center border transition-all ${o.isPurchased ? 'bg-amber-100 text-amber-700 border-amber-200 shadow-sm' : 'bg-white text-latte-300 border-cream-200 hover:border-latte-400'}`} title="核對"><CheckCircle2 size={18}/></button>
+                                                                    <button onClick={() => toggleStatus(o.id, 'isPicked')} className={`w-9 h-9 rounded-xl flex items-center justify-center border transition-all ${o.isPicked ? 'bg-emerald-100 text-emerald-700 border-emerald-200 shadow-sm' : 'bg-white text-latte-300 border-cream-200 hover:border-latte-400'}`} title="入袋"><ShoppingBag size={18}/></button>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                ))
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
 
@@ -880,7 +977,7 @@
 
                         {activeTab === 'customers' && (
                             <div className="space-y-3 animate-in">
-                                <div className="relative"><input type="text" placeholder="搜尋顧客名稱..." value={searchQuery || ''} onChange={e => setSearchQuery(e.target.value)} className="w-full bg-white rounded-xl p-3 pl-10 border border-cream-200 outline-none focus:border-latte-400 text-latte-800" /><Search size={16} className="absolute left-3 top-3.5 text-latte-300" /></div>
+                                <div className="relative"><input type="text" placeholder="搜尋顧客名稱、商品或款式..." value={searchQuery || ''} onChange={e => setSearchQuery(e.target.value)} className="w-full bg-white rounded-xl p-3 pl-10 border border-cream-200 outline-none focus:border-latte-400 text-latte-800" /><Search size={16} className="absolute left-3 top-3.5 text-latte-300" /></div>
                                 <div className="flex justify-between items-center px-2 mb-2">
                                     <div className="flex items-center gap-3">
                                         <button 
@@ -995,7 +1092,7 @@
                                 <div className="p-4 pb-0"><div className="relative"><input type="text" placeholder="搜尋..." className="w-full bg-cream-50 border border-cream-200 p-2 pl-9 rounded-xl text-sm outline-none focus:border-latte-400 text-latte-800" value={dashboardSearchQuery || ''} onChange={e => setDashboardSearchQuery(e.target.value)}/><Search size={14} className="absolute left-3 top-2.5 text-latte-400"/></div></div>
                                 <div className="flex-1 overflow-y-auto p-4 space-y-3">
                                     {getDashboardDetailOrders().map(o => (
-                                          <div key={o.id} className="bg-white p-4 rounded-2xl border border-cream-200 shadow-sm flex justify-between items-center">
+                                         <div key={o.id} className="bg-white p-4 rounded-2xl border border-cream-200 shadow-sm flex justify-between items-center">
                                             <div>
                                                 <div className="font-bold text-latte-800">{o.productName} <span className="text-xs font-normal text-latte-400">({o.variant})</span></div>
                                                 <div className="text-xs text-latte-400 mt-1">{o.customer} · {o.qty} 個</div>
