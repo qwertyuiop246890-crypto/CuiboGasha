@@ -8,13 +8,28 @@
     <!-- 1. Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- 2. Load Babel for JSX (Pinned version to prevent target errors) -->
-    <script src="https://unpkg.com/@babel/standalone@7.23.9/babel.min.js"></script>
-
+    <!-- 2. Load React, ReactDOM, and Babel (UMD Versions for maximum compatibility) -->
+    <!-- The order is very important: React MUST be loaded before ReactDOM and Lucide -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    
+    <!-- Fix for lucide-react UMD depending on lowercase 'react' -->
+    <script>
+        window.react = window.React;
+    </script>
+    
     <!-- 3. Load External Libraries -->
+    <!-- Now it's safe to load lucide-react since React is fully initialized -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Use a specific build of lucide-react that works well with UMD -->
+    <script src="https://unpkg.com/lucide-react@0.263.1/dist/umd/lucide-react.js"></script>
+    
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+
+    <!-- Load Babel last -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
 
     <!-- 4. Configure Tailwind Theme -->
     <script>
@@ -57,18 +72,69 @@
 <body>
     <div id="root"></div>
 
-    <script type="text/babel" data-type="module" data-presets="react">
-        import React, { useState, useMemo, useEffect, useRef } from 'https://esm.sh/react@18.2.0?dev';
-        import { createRoot } from 'https://esm.sh/react-dom@18.2.0/client?dev';
-        import { 
-            LayoutDashboard, ShoppingBag, Users, Zap, Plus, ArrowRight, AlertCircle, 
-            CheckCircle2, Truck, DollarSign, Search, X, ChevronRight, ClipboardList, 
-            User, ListOrdered, Tag, CheckSquare, Trash2, Edit, Save, 
-            Image as ImageIcon, Download, Loader2, Coins, Circle, ShoppingCart, Settings,
-            Cloud, Upload, FileJson, FileSpreadsheet, RefreshCcw, Minus, ArrowRightCircle, Megaphone, Undo2, History, Package, RotateCcw,
-            FileArchive, Square, Clock, Calendar,
-            Database, UploadCloud, DownloadCloud, AlertTriangle
-        } from 'https://esm.sh/lucide-react@0.263.1?dev';
+    <script type="text/babel" data-presets="react">
+        // 1. 從全域變數解構取代 import
+        const { useState, useMemo, useEffect, useRef } = React;
+        const { createRoot } = ReactDOM;
+        
+        // 確保 lucideReact 存在，否則提供備用空元件以防止當機
+        const getIcon = (name) => {
+            if (typeof lucideReact !== 'undefined' && lucideReact[name]) {
+                return lucideReact[name];
+            }
+            // 備用元件
+            return () => <span className="inline-block w-4 h-4 bg-gray-200 rounded-full" title={name}></span>;
+        };
+
+        // 安全地獲取所有需要的圖示
+        const LayoutDashboard = getIcon('LayoutDashboard');
+        const ShoppingBag = getIcon('ShoppingBag');
+        const Users = getIcon('Users');
+        const Zap = getIcon('Zap');
+        const Plus = getIcon('Plus');
+        const ArrowRight = getIcon('ArrowRight');
+        const AlertCircle = getIcon('AlertCircle');
+        const CheckCircle2 = getIcon('CheckCircle2');
+        const Truck = getIcon('Truck');
+        const DollarSign = getIcon('DollarSign');
+        const Search = getIcon('Search');
+        const X = getIcon('X');
+        const ChevronRight = getIcon('ChevronRight');
+        const ClipboardList = getIcon('ClipboardList');
+        const User = getIcon('User');
+        const ListOrdered = getIcon('ListOrdered');
+        const Tag = getIcon('Tag');
+        const CheckSquare = getIcon('CheckSquare');
+        const Trash2 = getIcon('Trash2');
+        const Edit = getIcon('Edit');
+        const Save = getIcon('Save');
+        const ImageIcon = getIcon('Image');
+        const Download = getIcon('Download');
+        const Loader2 = getIcon('Loader2');
+        const Coins = getIcon('Coins');
+        const Circle = getIcon('Circle');
+        const ShoppingCart = getIcon('ShoppingCart');
+        const Settings = getIcon('Settings');
+        const Cloud = getIcon('Cloud');
+        const Upload = getIcon('Upload');
+        const FileJson = getIcon('FileJson');
+        const FileSpreadsheet = getIcon('FileSpreadsheet');
+        const RefreshCcw = getIcon('RefreshCcw');
+        const Minus = getIcon('Minus');
+        const ArrowRightCircle = getIcon('ArrowRightCircle');
+        const Megaphone = getIcon('Megaphone');
+        const Undo2 = getIcon('Undo2');
+        const History = getIcon('History');
+        const Package = getIcon('Package');
+        const RotateCcw = getIcon('RotateCcw');
+        const FileArchive = getIcon('FileArchive');
+        const Square = getIcon('Square');
+        const Clock = getIcon('Clock');
+        const Calendar = getIcon('Calendar');
+        const Database = getIcon('Database');
+        const UploadCloud = getIcon('UploadCloud');
+        const DownloadCloud = getIcon('DownloadCloud');
+        const AlertTriangle = getIcon('AlertTriangle');
 
         const App = () => {
             // 1. Settings & Constants
@@ -390,7 +456,7 @@
                 const currentTime = now.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute: '2-digit' });
 
                 const newOrder = {
-                    id: Date.now(), 
+                    id: Date.now() + Math.random(), 
                     date: currentDate,
                     time: currentTime,
                     customer: customerName, productName: machineName, variant: variantName, qty: inputQty,
@@ -446,7 +512,7 @@
                     const updatedOrders = [];
                     const ecoNew = releasingOrder.ecoFeePerUnit * qtyToRelease;
                     updatedOrders.push({
-                        ...releasingOrder, id: Date.now(), qty: qtyToRelease, ecoFeeTotal: ecoNew,
+                        ...releasingOrder, id: Date.now() + Math.random(), qty: qtyToRelease, ecoFeeTotal: ecoNew,
                         gashaTotalJPY: releasingOrder.unitPriceJPY * qtyToRelease, gashaTotalTWD: releasingOrder.unitPriceTWD * qtyToRelease,
                         customerTotalTWD: (releasingOrder.unitPriceTWD * qtyToRelease) + ecoNew, isReleasing: true
                     });
@@ -483,7 +549,7 @@
                         // 如果只轉讓部分，需切分訂單
                         const updated = [];
                         const ecoNew = transferringOrder.ecoFeePerUnit * qty;
-                        updated.push({ ...transferringOrder, id: Date.now(), customer: target, qty: qty, ecoFeeTotal: ecoNew, gashaTotalJPY: transferringOrder.unitPriceJPY*qty, gashaTotalTWD: transferringOrder.unitPriceTWD*qty, customerTotalTWD: (transferringOrder.unitPriceTWD*qty)+ecoNew, isReleasing: false });
+                        updated.push({ ...transferringOrder, id: Date.now() + Math.random(), customer: target, qty: qty, ecoFeeTotal: ecoNew, gashaTotalJPY: transferringOrder.unitPriceJPY*qty, gashaTotalTWD: transferringOrder.unitPriceTWD*qty, customerTotalTWD: (transferringOrder.unitPriceTWD*qty)+ecoNew, isReleasing: false });
                         prev.forEach(o => {
                             if (o.id === transferringOrder.id) {
                                 const left = o.qty - qty;
@@ -542,7 +608,7 @@
             };
             
             const initiateStatusUpdate = (order, targetStatus) => { if (order.qty === 1) { setOrders(p => p.map(o => o.id === order.id ? { ...o, [targetStatus]: true } : o)); notify("已更新"); return; } setStatusUpdateData({ order, targetStatus, maxQty: order.qty }); setStatusUpdateQty(order.qty); };
-            const confirmStatusUpdate = () => { if (!statusUpdateData) return; const { order, targetStatus } = statusUpdateData; const qtyToUpdate = parseInt(statusUpdateQty); if (qtyToUpdate <= 0 || qtyToUpdate > order.qty) return; setOrders(prev => { if (qtyToUpdate === order.qty) return prev.map(o => o.id === order.id ? { ...o, [targetStatus]: true } : o); const updatedOrders = []; const ecoNew = order.ecoFeePerUnit * qtyToUpdate; updatedOrders.push({ ...order, id: Date.now(), qty: qtyToUpdate, ecoFeeTotal: ecoNew, gashaTotalJPY: order.unitPriceJPY*qtyToUpdate, gashaTotalTWD: order.unitPriceTWD*qtyToUpdate, customerTotalTWD: (order.unitPriceTWD*qtyToUpdate)+ecoNew, [targetStatus]: true }); prev.forEach(o => { if (o.id === order.id) { const leftQty = o.qty - qtyToUpdate; updatedOrders.push({ ...o, qty: leftQty, ecoFeeTotal: o.ecoFeePerUnit*leftQty, gashaTotalJPY: o.unitPriceJPY*leftQty, gashaTotalTWD: o.unitPriceTWD*leftQty, customerTotalTWD: (o.unitPriceTWD*leftQty)+(o.ecoFeePerUnit*leftQty) }); } else updatedOrders.push(o); }); return updatedOrders; }); setStatusUpdateData(null); notify(`已更新 ${qtyToUpdate} 個`); };
+            const confirmStatusUpdate = () => { if (!statusUpdateData) return; const { order, targetStatus } = statusUpdateData; const qtyToUpdate = parseInt(statusUpdateQty); if (qtyToUpdate <= 0 || qtyToUpdate > order.qty) return; setOrders(prev => { if (qtyToUpdate === order.qty) return prev.map(o => o.id === order.id ? { ...o, [targetStatus]: true } : o); const updatedOrders = []; const ecoNew = order.ecoFeePerUnit * qtyToUpdate; updatedOrders.push({ ...order, id: Date.now() + Math.random(), qty: qtyToUpdate, ecoFeeTotal: ecoNew, gashaTotalJPY: order.unitPriceJPY*qtyToUpdate, gashaTotalTWD: order.unitPriceTWD*qtyToUpdate, customerTotalTWD: (order.unitPriceTWD*qtyToUpdate)+ecoNew, [targetStatus]: true }); prev.forEach(o => { if (o.id === order.id) { const leftQty = o.qty - qtyToUpdate; updatedOrders.push({ ...o, qty: leftQty, ecoFeeTotal: o.ecoFeePerUnit*leftQty, gashaTotalJPY: o.unitPriceJPY*leftQty, gashaTotalTWD: o.unitPriceTWD*leftQty, customerTotalTWD: (o.unitPriceTWD*leftQty)+(o.ecoFeePerUnit*leftQty) }); } else updatedOrders.push(o); }); return updatedOrders; }); setStatusUpdateData(null); notify(`已更新 ${qtyToUpdate} 個`); };
             
             const openPriceEditor = () => { 
                 let source = priceTable;
