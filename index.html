@@ -76,6 +76,9 @@
             const DEFAULT_PRICE_TABLE = { 100: 50, 200: 80, 300: 120, 400: 140, 500: 170, 600: 190, 800: 260, 1000: 360, 1500: 450 };
             const ECO_FEE = 10; 
             const DEFAULT_API_URL = "https://script.google.com/macros/s/AKfycbzUzREPd7UAzndt6i4qN70nkd1ZUJWdzJa3DbQjN7yFZeJ2ne5Nj9f767-tMSaB7ayI/exec";
+            
+            // 預設結語文案 (靜態部分)
+            const DEFAULT_COPY_FOOTER = `可以先幫我搭波卻可\n有誤的話～請趕快跟我說！\n\n₊⊹ 若是沒有漏掉的商品 ₊⊹\n就可以直接結帳囉！\n\n網址：(請在此輸入您的結帳網址)\n找到自己名字後完成下單就可以嚕\n𐙚 收到所有連結後請盡速完成付款\n    不要耽誤到最佳的賞味期限唷\n\n⚝ p.s. 前一次連線有開箱分享的朋友~\n下單後請幫我備註一下：開箱禮\n𝐭𝐡𝐚𝐧𝐤 𝐲𝐨𝐮 („• ֊ •„)੭`;
 
             // === [新增] 全域資料強制合併與清理工具 ===
             const mergeOrdersList = (list) => {
@@ -142,6 +145,9 @@
             });
             const [apiUrl, setApiUrl] = useState(() => localStorage.getItem('cuibo_gasha_api_url') || DEFAULT_API_URL);
             
+            // Notification Template State
+            const [copyFooter, setCopyFooter] = useState(() => localStorage.getItem('cuibo_gasha_copy_footer') || DEFAULT_COPY_FOOTER);
+
             // History
             const [history, setHistory] = useState(() => {
                 const h = loadLocal('cuibo_gasha_history', { machines: [], customers: [], variants: [], machineVariants: {}, machinePrices: {} });
@@ -198,6 +204,7 @@
             useEffect(() => { localStorage.setItem('cuibo_gasha_pricetable', JSON.stringify(priceTable)); }, [priceTable]);
             useEffect(() => { localStorage.setItem('cuibo_gasha_api_url', apiUrl); }, [apiUrl]);
             useEffect(() => { localStorage.setItem('cuibo_gasha_history', JSON.stringify(history)); }, [history]);
+            useEffect(() => { localStorage.setItem('cuibo_gasha_copy_footer', copyFooter); }, [copyFooter]);
 
             useEffect(() => { if(activeTab !== 'customers') setSelectedForExport(new Set()); }, [activeTab]);
 
@@ -575,29 +582,11 @@
                     details += `${i.productName} ${i.variant} x${i.qty} $${i.customerTotalTWD}${i.isReleasing?' (釋出中)':''}\n`;
                 });
 
-                const t = `親愛的 ${c.name} 您好，
-您本次的連線扭蛋購物明細如下：
-${details}
-----------------
-消費總額：$${c.totalSpent.toLocaleString()}
-
-可以先幫我搭波卻可
-有誤的話～請趕快跟我說！
-
-₊⊹ 若是沒有漏掉的商品 ₊⊹
-就可以直接結帳囉！
-
-網址：（這裡留給我自己輸入網址）
-找到自己名字後完成下單就可以嚕
-𐙚 收到所有連結後請盡速完成付款
-    不要耽誤到最佳的賞味期限唷
-
-⚝ p.s. 前一次連線有開箱分享的朋友~
-下單後請幫我備註一下：開箱禮
-𝐭𝐡𝐚𝐧𝐤 𝐲𝐨𝐮 („• ֊ •„)੭`;
+                // 動靜分離：上半部動態生成，下半部接上使用者自訂的結語
+                const finalMsg = `親愛的 ${c.name} 您好，\n您本次的連線扭蛋購物明細如下：\n${details}----------------\n消費總額：$${c.totalSpent.toLocaleString()}\n\n${copyFooter}`;
 
                 const ta = document.createElement("textarea"); 
-                ta.value = t; 
+                ta.value = finalMsg; 
                 document.body.appendChild(ta); 
                 ta.select(); 
                 document.execCommand('copy'); 
@@ -1086,6 +1075,29 @@ ${details}
                                             <Trash2 size={20}/> <span className="text-[16px]">清除所有訂單</span>
                                         </button>
                                     </div>
+                                </div>
+
+                                {/* Section 3: 通知結語設定 (動靜分離版) */}
+                                <div className="space-y-4 pt-2">
+                                    <h4 className="text-[13px] font-black text-latte-400 tracking-wider uppercase">通知結語設定</h4>
+                                    <div className="bg-cream-50 p-3 rounded-xl border border-cream-200">
+                                        <p className="text-[11px] text-latte-500 font-bold mb-1">💡 系統會自動生成顧客明細！</p>
+                                        <p className="text-[10px] text-latte-400">你只需要在這裡設定「網址、注意事項、結語」等固定不變的內容。修改後會自動記憶，未來複製文案時會自動拼接在明細下方。</p>
+                                    </div>
+                                    <textarea 
+                                        className="w-full bg-[#FCF4E9]/40 border border-[#EBE0D6] p-3.5 rounded-xl outline-none text-latte-800 text-sm focus:border-latte-400 focus:bg-white transition-colors h-64 resize-none leading-relaxed"
+                                        value={copyFooter}
+                                        onChange={e => setCopyFooter(e.target.value)}
+                                        placeholder="請輸入網址與結語..."
+                                    />
+                                    <button onClick={() => {
+                                        triggerConfirm('恢復預設', '確定要將結語恢復為預設內容嗎？', () => {
+                                            setCopyFooter(DEFAULT_COPY_FOOTER);
+                                            notify("已恢復預設結語");
+                                        }, 'danger');
+                                    }} className="text-xs font-bold text-latte-400 hover:text-latte-600 underline">
+                                        恢復預設結語
+                                    </button>
                                 </div>
                             </div>
                         </div>
