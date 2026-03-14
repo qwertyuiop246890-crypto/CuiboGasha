@@ -8,28 +8,13 @@
     <!-- 1. Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- 2. Load React, ReactDOM, and Babel (UMD Versions for maximum compatibility) -->
-    <!-- The order is very important: React MUST be loaded before ReactDOM and Lucide -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-    
-    <!-- Fix for lucide-react UMD depending on lowercase 'react' -->
-    <script>
-        window.react = window.React;
-    </script>
-    
+    <!-- 2. Load Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone@7.23.9/babel.min.js"></script>
+
     <!-- 3. Load External Libraries -->
-    <!-- Now it's safe to load lucide-react since React is fully initialized -->
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <!-- Use a specific build of lucide-react that works well with UMD -->
-    <script src="https://unpkg.com/lucide-react@0.263.1/dist/umd/lucide-react.js"></script>
-    
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
-
-    <!-- Load Babel last -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
 
     <!-- 4. Configure Tailwind Theme -->
     <script>
@@ -72,69 +57,19 @@
 <body>
     <div id="root"></div>
 
-    <script type="text/babel" data-presets="react">
-        // 1. 從全域變數解構取代 import
-        const { useState, useMemo, useEffect, useRef } = React;
-        const { createRoot } = ReactDOM;
-        
-        // 確保 lucideReact 存在，否則提供備用空元件以防止當機
-        const getIcon = (name) => {
-            if (typeof lucideReact !== 'undefined' && lucideReact[name]) {
-                return lucideReact[name];
-            }
-            // 備用元件
-            return () => <span className="inline-block w-4 h-4 bg-gray-200 rounded-full" title={name}></span>;
-        };
-
-        // 安全地獲取所有需要的圖示
-        const LayoutDashboard = getIcon('LayoutDashboard');
-        const ShoppingBag = getIcon('ShoppingBag');
-        const Users = getIcon('Users');
-        const Zap = getIcon('Zap');
-        const Plus = getIcon('Plus');
-        const ArrowRight = getIcon('ArrowRight');
-        const AlertCircle = getIcon('AlertCircle');
-        const CheckCircle2 = getIcon('CheckCircle2');
-        const Truck = getIcon('Truck');
-        const DollarSign = getIcon('DollarSign');
-        const Search = getIcon('Search');
-        const X = getIcon('X');
-        const ChevronRight = getIcon('ChevronRight');
-        const ClipboardList = getIcon('ClipboardList');
-        const User = getIcon('User');
-        const ListOrdered = getIcon('ListOrdered');
-        const Tag = getIcon('Tag');
-        const CheckSquare = getIcon('CheckSquare');
-        const Trash2 = getIcon('Trash2');
-        const Edit = getIcon('Edit');
-        const Save = getIcon('Save');
-        const ImageIcon = getIcon('Image');
-        const Download = getIcon('Download');
-        const Loader2 = getIcon('Loader2');
-        const Coins = getIcon('Coins');
-        const Circle = getIcon('Circle');
-        const ShoppingCart = getIcon('ShoppingCart');
-        const Settings = getIcon('Settings');
-        const Cloud = getIcon('Cloud');
-        const Upload = getIcon('Upload');
-        const FileJson = getIcon('FileJson');
-        const FileSpreadsheet = getIcon('FileSpreadsheet');
-        const RefreshCcw = getIcon('RefreshCcw');
-        const Minus = getIcon('Minus');
-        const ArrowRightCircle = getIcon('ArrowRightCircle');
-        const Megaphone = getIcon('Megaphone');
-        const Undo2 = getIcon('Undo2');
-        const History = getIcon('History');
-        const Package = getIcon('Package');
-        const RotateCcw = getIcon('RotateCcw');
-        const FileArchive = getIcon('FileArchive');
-        const Square = getIcon('Square');
-        const Clock = getIcon('Clock');
-        const Calendar = getIcon('Calendar');
-        const Database = getIcon('Database');
-        const UploadCloud = getIcon('UploadCloud');
-        const DownloadCloud = getIcon('DownloadCloud');
-        const AlertTriangle = getIcon('AlertTriangle');
+    <!-- 恢復為原先的 module import 架構，並移除可能導致不穩定的 ?dev 參數 -->
+    <script type="text/babel" data-type="module" data-presets="react">
+        import React, { useState, useMemo, useEffect, useRef } from 'https://esm.sh/react@18.2.0';
+        import { createRoot } from 'https://esm.sh/react-dom@18.2.0/client';
+        import { 
+            LayoutDashboard, ShoppingBag, Users, Zap, Plus, ArrowRight, AlertCircle, 
+            CheckCircle2, Truck, DollarSign, Search, X, ChevronRight, ClipboardList, 
+            User, ListOrdered, Tag, CheckSquare, Trash2, Edit, Save, 
+            Image as ImageIcon, Download, Loader2, Coins, Circle, ShoppingCart, Settings,
+            Cloud, Upload, FileJson, FileSpreadsheet, RefreshCcw, Minus, ArrowRightCircle, Megaphone, Undo2, History, Package, RotateCcw,
+            FileArchive, Square, Clock, Calendar,
+            Database, UploadCloud, DownloadCloud, AlertTriangle
+        } from 'https://esm.sh/lucide-react@0.263.1';
 
         const App = () => {
             // 1. Settings & Constants
@@ -143,7 +78,6 @@
             const DEFAULT_API_URL = "https://script.google.com/macros/s/AKfycbzUzREPd7UAzndt6i4qN70nkd1ZUJWdzJa3DbQjN7yFZeJ2ne5Nj9f767-tMSaB7ayI/exec";
 
             // === [新增] 全域資料強制合併與清理工具 ===
-            // 負責過濾空白字元、強制轉換數字，並把相同的明細無條件聚合
             const mergeOrdersList = (list) => {
                 const merged = [];
                 list.forEach(o => {
@@ -189,13 +123,11 @@
                 } catch(e) { return def; }
             };
 
-            // 改用攔截器綁定 State
             const [orders, setOrdersRaw] = useState(() => {
                 const loaded = loadLocal('cuibo_gasha_orders', []);
                 return mergeOrdersList(loaded);
             });
             
-            // 全域攔截器：確保任何狀態更新都會先經過合併清理
             const setOrders = (action) => {
                 setOrdersRaw(prev => {
                     const next = typeof action === 'function' ? action(prev) : action;
@@ -307,9 +239,8 @@
                 orders.forEach(o => {
                     const cleanName = o.customer ? o.customer.trim() : 'Unknown';
                     if (!map[cleanName]) map[cleanName] = { name: cleanName, totalSpent: 0, items: [], orderCount: 0 };
-                    map[cleanName].orderCount += o.qty; // 改為顯示總顆數更直觀
+                    map[cleanName].orderCount += o.qty; 
                     map[cleanName].totalSpent += o.customerTotalTWD;
-                    // 因為外層已經做了合併機制，這邊的 o 已經是合併後的乾淨資料，直接放入即可
                     map[cleanName].items.push({ ...o, itemTotal: o.customerTotalTWD, finalPrice: o.unitPriceTWD });
                 });
                 return Object.values(map).sort((a,b) => b.totalSpent - a.totalSpent);
@@ -336,7 +267,6 @@
             }, [customerList, selectedCustomerName]);
 
             const filteredCustomers = customerList.filter(c => c.name.includes(searchQuery));
-            
             const filteredProducts = productList.filter(p => p.productName.includes(searchQuery) || p.variant.includes(searchQuery));
             
             const [selectedProductKey, setSelectedProductKey] = useState(null);
@@ -419,7 +349,7 @@
                 setEditingOrder(prev => ({ ...prev, ...updates }));
             };
 
-            // === [更新] 智慧新增邏輯 (依賴攔截器自動合併) ===
+            // === [更新] 智慧新增邏輯 ===
             const processAddOrder = () => {
                 if (!inputCustomer.trim()) { notify("請輸入顧客名稱"); return false; }
                 if (!currentMachine.name.trim()) { notify("請輸入機台名稱"); return false; }
@@ -466,14 +396,11 @@
                     isPurchased: false, isPicked: false, isReleasing: false
                 };
                 
-                // 透過攔截器，新訂單會自動與舊的相同訂單合併，並浮動到最上方
                 setOrders(p => [newOrder, ...p]);
-
                 notify(`已加入: ${customerName}`);
                 return true;
             };
 
-            // Four Specific Add Order Actions
             const handleAddSameCustomer = () => {
                 if (!processAddOrder()) return;
                 setCurrentMachine(prev => ({ ...prev, name: '', variant: '' }));
@@ -528,7 +455,6 @@
             };
             
             const handleCancelRelease = (id) => {
-                // 透過攔截器，只要解除釋出狀態，就會自動與原有的未釋出訂單無縫合併
                 setOrders(prev => prev.map(o => o.id === id ? { ...o, isReleasing: false } : o));
                 notify("已取消釋出");
             };
@@ -543,10 +469,7 @@
 
                 triggerConfirm('確認轉讓', `將 ${qty} 個轉讓給「${target}」？\n所有權將立即轉移，並取消釋出狀態。`, () => {
                     setOrders(prev => {
-                        // 如果轉讓全部，直接改名字
                         if (qty === transferringOrder.qty) return prev.map(o => o.id === transferringOrder.id ? { ...o, customer: target, isReleasing: false } : o);
-                        
-                        // 如果只轉讓部分，需切分訂單
                         const updated = [];
                         const ecoNew = transferringOrder.ecoFeePerUnit * qty;
                         updated.push({ ...transferringOrder, id: Date.now() + Math.random(), customer: target, qty: qty, ecoFeeTotal: ecoNew, gashaTotalJPY: transferringOrder.unitPriceJPY*qty, gashaTotalTWD: transferringOrder.unitPriceTWD*qty, customerTotalTWD: (transferringOrder.unitPriceTWD*qty)+ecoNew, isReleasing: false });
@@ -682,7 +605,6 @@ ${details}
                 notify("已複製通知文案"); 
             };
 
-            // === [新增] 釋出池專用複製功能 ===
             const handleCopyReleasingText = () => {
                 const releasingList = getDashboardDetailOrders();
                 if (releasingList.length === 0) {
@@ -692,7 +614,6 @@ ${details}
 
                 let details = "📢 目前釋出中的商品如下：\n\n";
                 releasingList.forEach(i => {
-                    // 若有包含環保費，算出真實單價
                     const unitPrice = i.unitPriceTWD + i.ecoFeePerUnit;
                     details += `▪ ${i.productName} ${i.variant} x${i.qty} ($${unitPrice}/個)\n`;
                 });
